@@ -46,7 +46,7 @@ SKIP_PATHS: set[str] = {
 # Phase 4 — Act: where output lands in the vault
 # Both are vault-relative paths; override via env vars.
 CAPTURES_DIR = os.environ.get("LOCAL_FIRST_CAPTURES_DIR", "_captures")
-TASKS_FILE   = os.environ.get("LOCAL_FIRST_TASKS_FILE",   "_TASKS.md")
+TASKS_FILE   = os.environ.get("LOCAL_FIRST_TASKS_FILE",   "_captures/_CAPTURED_TASKS.md")
 
 # Optional personal context file — prepended to the classify system prompt at runtime.
 # Lives outside the repo so private details (tool names, workflows) never hit git.
@@ -532,6 +532,7 @@ def append_task(
     task_line = f"\n- [ ] {suggested_action} ([[{source_file}]])\n"
 
     if not dry_run:
+        tasks_path.parent.mkdir(parents=True, exist_ok=True)
         with tasks_path.open("a", encoding="utf-8") as f:
             f.write(task_line)
 
@@ -738,7 +739,7 @@ def act(
     ] = CAPTURES_DIR,
     tasks_file: Annotated[
         str,
-        typer.Option("--tasks-file", "-t", help="Vault-relative path of the tasks file to append to. Defaults to LOCAL_FIRST_TASKS_FILE or '_TASKS.md'."),
+        typer.Option("--tasks-file", "-t", help="Vault-relative path of the tasks file to append to. Defaults to LOCAL_FIRST_TASKS_FILE or '_captures/_CAPTURED_TASKS.md'."),
     ] = TASKS_FILE,
     dry_run: Annotated[
         bool,

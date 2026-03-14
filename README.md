@@ -113,7 +113,7 @@ uv run python thread_triage.py act --captures-dir "_captures" --tasks-file "_TAS
 |------|-------|---------|-------------|
 | `--db` | | `LOCAL_FIRST_DB` or `~/.local-first/local-first.db` | Path to SQLite DB |
 | `--captures-dir` | `-C` | `LOCAL_FIRST_CAPTURES_DIR` or `_captures` | Vault-relative folder for capture notes |
-| `--tasks-file` | `-t` | `LOCAL_FIRST_TASKS_FILE` or `_TASKS.md` | Vault-relative tasks file to append to |
+| `--tasks-file` | `-t` | `LOCAL_FIRST_TASKS_FILE` or `_captures/_CAPTURED_TASKS.md` | Vault-relative tasks file to append to |
 | `--dry-run` | `-n` | false | Show what would be created without writing |
 | `--verbose` | `-v` | false | Show close/discard rows too |
 
@@ -127,7 +127,7 @@ uv run python thread_triage.py act --captures-dir "_captures" --tasks-file "_TAS
 | `LOCAL_FIRST_THREAD_CONTEXT` | Path to personal context file (default: `~/.local-first/thread-triage-context.md`) |
 | `LOCAL_FIRST_SKIP_PATHS` | Colon-separated path fragments to exclude from scanning (e.g. `_marketing:_strategy`) |
 | `LOCAL_FIRST_CAPTURES_DIR` | Vault-relative folder for capture notes (default: `_captures`) |
-| `LOCAL_FIRST_TASKS_FILE` | Vault-relative tasks file for `act` to append to (default: `_TASKS.md`) |
+| `LOCAL_FIRST_TASKS_FILE` | Vault-relative tasks file for `act` to append to (default: `_captures/_CAPTURED_TASKS.md`) |
 
 ## Dispositions
 
