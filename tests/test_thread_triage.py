@@ -24,6 +24,7 @@ from thread_triage import (
     run_scan,
     week_label,
     write_rows,
+    SKIP_PATHS,
 )
 
 runner = CliRunner()
@@ -131,6 +132,20 @@ class TestExtractThreads:
         threads = extract_threads(note, vault)
         assert len(threads) == 0
 
+    def test_skips_sql_keywords_in_thoughts(self, tmp_path):
+        vault = tmp_path
+        note = vault / "note.md"
+        note.write_text(
+            "## Thoughts\n\n"
+            "- select * from customers\n"
+            "- Select count(*) from orders where status is null\n"
+            "- I keep thinking about how to improve the weekly review flow\n"
+        )
+        threads = extract_threads(note, vault)
+        texts = [t.thread_text for t in threads]
+        assert not any("select" in t.lower() for t in texts)
+        assert any("weekly review" in t for t in texts)
+
     def test_section_attribution(self, tmp_path):
         vault = tmp_path
         note = vault / "note.md"
@@ -165,6 +180,21 @@ class TestFindFilesContainingDates:
         (vault / "note.md").write_text("Nothing relevant here.")
         result = find_files_containing_dates(vault, [date(2026, 3, 12)])
         assert len(result) == 0
+
+    def test_skips_paths_matching_skip_paths(self, tmp_path):
+        vault = tmp_path
+        marketing = vault / "_marketing" / "Starter Pack.md"
+        marketing.parent.mkdir()
+        marketing.write_text("2026-03-12")
+        timeline = vault / "Timeline" / "2026-03-12.md"
+        timeline.parent.mkdir()
+        timeline.write_text("2026-03-12")
+
+        dates = [date(2026, 3, 12)]
+        with patch("thread_triage.SKIP_PATHS", {"_marketing"}):
+            result = find_files_containing_dates(vault, dates)
+        assert marketing not in result
+        assert timeline in result
 
 
 class TestDeduplicate:

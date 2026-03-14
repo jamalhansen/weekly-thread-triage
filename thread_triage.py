@@ -35,6 +35,17 @@ SCAN_EXTENSIONS = {".md"}
 # Files/dirs to skip even if they contain date strings
 SKIP_DIRS = {".obsidian", ".trash", "Templates"}
 
+# Path fragments to skip (colon-separated in LOCAL_FIRST_SKIP_PATHS env var)
+# e.g. LOCAL_FIRST_SKIP_PATHS="_marketing:_strategy:Local-First AI - Prep Timeline"
+SKIP_PATHS: set[str] = {
+    p.strip()
+    for p in os.environ.get("LOCAL_FIRST_SKIP_PATHS", "").split(":")
+    if p.strip()
+}
+
+# First words that indicate a line is code/SQL, not a natural-language thought
+_SQL_KEYWORDS = {"select", "insert", "update", "delete", "create", "drop", "alter", "with"}
+
 app = typer.Typer(help=__doc__)
 
 
@@ -103,6 +114,10 @@ def find_files_containing_dates(vault: Path, dates: list[date]) -> dict[Path, se
         if any(skip in path.parts for skip in SKIP_DIRS):
             continue
 
+        rel = str(path.relative_to(vault))
+        if SKIP_PATHS and any(skip in rel for skip in SKIP_PATHS):
+            continue
+
         try:
             content = path.read_text(encoding="utf-8", errors="ignore")
         except Exception:
@@ -110,7 +125,6 @@ def find_files_containing_dates(vault: Path, dates: list[date]) -> dict[Path, se
 
         found = {ds for ds in date_strings if ds in content}
         if found:
-            rel = str(path.relative_to(vault))
             matches[path] = found
 
     return matches
@@ -168,6 +182,9 @@ def extract_threads(path: Path, vault: Path) -> list[ThreadRow]:
             if thought_match:
                 text = thought_match.group(1).strip()
                 # Skip sub-bullets that are just short labels
+                first_word = text.split()[0].lower().rstrip(";,(\\*") if text else ""
+                if first_word in _SQL_KEYWORDS:
+                    continue
                 if text and len(text.split()) >= 4:
                     threads.append(ThreadRow(
                         week="",
