@@ -13,7 +13,10 @@ Searches all vault files for date strings from the target week. Extracts uncheck
 Sends each unclassified row to an LLM with a prompt asking for a disposition (`capture | task | defer | close | discard`), a concrete suggested action, and a one-sentence rationale. Updates rows in place. Classification quality improves significantly when a personal context file is provided (see [Personal context file](#personal-context-file)).
 
 **Phase 3 — review** (Claude chat):
-Open a chat session with the SQLite MCP server attached. Review rows, update `human_disposition`, and act on them.
+Open a chat session with the SQLite MCP server attached. Review rows and set `human_disposition` on each one (`capture | task | defer | close | discard`).
+
+**Phase 4 — act** (`thread_triage act`):
+Loops over all rows where `human_disposition IS NOT NULL AND executed_at IS NULL`. Creates an Obsidian note in `_captures/` for captures, appends a `- [ ]` task line for tasks, and stamps `executed_at` when done. Defers are left untouched until a resurface mechanism is built.
 
 ## Installation
 
@@ -69,6 +72,15 @@ uv run python thread_triage.py classify --provider anthropic --context-file ~/.l
 
 # Dry-run classification
 uv run python thread_triage.py classify --dry-run --verbose
+
+# Act on all reviewed rows (create notes, append tasks)
+uv run python thread_triage.py act
+
+# Preview what act would do without writing anything
+uv run python thread_triage.py act --dry-run --verbose
+
+# Override where capture notes and tasks land
+uv run python thread_triage.py act --captures-dir "_captures" --tasks-file "_TASKS.md"
 ```
 
 ## CLI reference
@@ -95,6 +107,16 @@ uv run python thread_triage.py classify --dry-run --verbose
 | `--verbose` | `-v` | false | Show row-by-row progress |
 | `--debug` | `-d` | false | Show raw LLM prompts and responses |
 
+### `act`
+
+| Flag | Short | Default | Description |
+|------|-------|---------|-------------|
+| `--db` | | `LOCAL_FIRST_DB` or `~/.local-first/local-first.db` | Path to SQLite DB |
+| `--captures-dir` | `-C` | `LOCAL_FIRST_CAPTURES_DIR` or `_captures` | Vault-relative folder for capture notes |
+| `--tasks-file` | `-t` | `LOCAL_FIRST_TASKS_FILE` or `_TASKS.md` | Vault-relative tasks file to append to |
+| `--dry-run` | `-n` | false | Show what would be created without writing |
+| `--verbose` | `-v` | false | Show close/discard rows too |
+
 ## Environment variables
 
 | Variable | Description |
@@ -104,6 +126,8 @@ uv run python thread_triage.py classify --dry-run --verbose
 | `MODEL_PROVIDER` | Default LLM provider (`ollama`, `anthropic`, `gemini`, `groq`, `deepseek`) |
 | `LOCAL_FIRST_THREAD_CONTEXT` | Path to personal context file (default: `~/.local-first/thread-triage-context.md`) |
 | `LOCAL_FIRST_SKIP_PATHS` | Colon-separated path fragments to exclude from scanning (e.g. `_marketing:_strategy`) |
+| `LOCAL_FIRST_CAPTURES_DIR` | Vault-relative folder for capture notes (default: `_captures`) |
+| `LOCAL_FIRST_TASKS_FILE` | Vault-relative tasks file for `act` to append to (default: `_TASKS.md`) |
 
 ## Dispositions
 

@@ -1,10 +1,10 @@
 """Weekly Thread Triage — scan the vault for open threads and classify them for review.
 
-Two phases:
-  Phase 1 (scan)    — vault-wide date search, extract tasks/thoughts/ideas, write to SQLite
+Four phases:
+  Phase 1 (scan)     — vault-wide date search, extract tasks/thoughts/ideas, write to SQLite
   Phase 2 (classify) — LLM classifies each pending row with a suggested disposition
-
-Review (Phase 3) and execution (Phase 4) happen via Claude + SQLite MCP in a chat session.
+  Phase 3 (review)   — Claude chat + SQLite MCP: set human_disposition on each row
+  Phase 4 (act)      — create Obsidian notes for captures, append tasks, stamp executed_at
 """
 
 import os
@@ -42,6 +42,11 @@ SKIP_PATHS: set[str] = {
     for p in os.environ.get("LOCAL_FIRST_SKIP_PATHS", "").split(":")
     if p.strip()
 }
+
+# Phase 4 — Act: where output lands in the vault
+# Both are vault-relative paths; override via env vars.
+CAPTURES_DIR = os.environ.get("LOCAL_FIRST_CAPTURES_DIR", "_captures")
+TASKS_FILE   = os.environ.get("LOCAL_FIRST_TASKS_FILE",   "_TASKS.md")
 
 # Optional personal context file — prepended to the classify system prompt at runtime.
 # Lives outside the repo so private details (tool names, workflows) never hit git.
@@ -466,6 +471,157 @@ def run_classify(
         conn.close()
 
 
+# ── Phase 4: Act ──────────────────────────────────────────────────────────────
+
+def slugify(text: str, max_words: int = 8) -> str:
+    """Convert text to a readable, filename-safe slug."""
+    text = text.lower().strip()
+    text = re.sub(r"[^\w\s]", " ", text)       # strip punctuation
+    words = text.split()[:max_words]
+    return "-".join(w for w in words if w)
+
+
+def create_capture_note(
+    row_id: int,
+    week: str,
+    source_file: str,
+    thread_text: str,
+    suggested_action: str,
+    rationale: str,
+    vault: Path,
+    captures_dir: str,
+    dry_run: bool,
+) -> Path:
+    """Write an Obsidian capture note. Returns the target path (even in dry-run)."""
+    today = date.today().strftime("%Y-%m-%d")
+    slug = slugify(suggested_action or thread_text)
+    note_dir = vault / captures_dir
+    note_path = note_dir / f"{today} {slug}.md"
+    title = (suggested_action or thread_text).rstrip(".")
+
+    content = (
+        f"---\n"
+        f"created: {today}\n"
+        f"week: {week}\n"
+        f"type: capture\n"
+        f"source: {source_file}\n"
+        f"triage_id: {row_id}\n"
+        f"---\n\n"
+        f"# {title}\n\n"
+        f"> {thread_text}\n\n"
+        f"## Rationale\n\n"
+        f"{rationale}\n"
+    )
+
+    if not dry_run:
+        note_dir.mkdir(parents=True, exist_ok=True)
+        note_path.write_text(content, encoding="utf-8")
+
+    return note_path
+
+
+def append_task(
+    suggested_action: str,
+    source_file: str,
+    vault: Path,
+    tasks_file: str,
+    dry_run: bool,
+) -> Path:
+    """Append a task line to the tasks file. Returns the target path."""
+    tasks_path = vault / tasks_file
+    task_line = f"\n- [ ] {suggested_action} ([[{source_file}]])\n"
+
+    if not dry_run:
+        with tasks_path.open("a", encoding="utf-8") as f:
+            f.write(task_line)
+
+    return tasks_path
+
+
+def run_act(
+    db: Path,
+    vault: Path,
+    captures_dir: str,
+    tasks_file: str,
+    dry_run: bool,
+    verbose: bool,
+) -> tuple[int, int, int]:
+    """Run Phase 4: act on all reviewed rows that haven't been executed yet.
+
+    - capture  → create an Obsidian note in captures_dir
+    - task     → append a task line to tasks_file
+    - close / discard → stamp executed_at, no note needed
+    - defer    → skip (no resurface mechanism yet)
+
+    Returns (acted, deferred, errors).
+    """
+    conn = sqlite3.connect(db)
+    acted = deferred = errors = 0
+    try:
+        pending = conn.execute(
+            """SELECT id, week, source_file, thread_text,
+                      suggested_action, rationale, human_disposition
+               FROM thread_triage
+               WHERE human_disposition IS NOT NULL AND executed_at IS NULL
+               ORDER BY created_at"""
+        ).fetchall()
+
+        if not pending:
+            typer.echo("No rows pending action.")
+            return 0, 0, 0
+
+        if verbose:
+            typer.echo(f"[verbose] {len(pending)} rows to act on...")
+
+        for row_id, week, source_file, thread_text, suggested_action, rationale, disp in pending:
+            try:
+                if disp == "capture":
+                    path = create_capture_note(
+                        row_id, week, source_file, thread_text,
+                        suggested_action or "", rationale or "",
+                        vault, captures_dir, dry_run,
+                    )
+                    typer.echo(f"  [capture] {path.name}")
+
+                elif disp == "task":
+                    path = append_task(
+                        suggested_action or thread_text, source_file,
+                        vault, tasks_file, dry_run,
+                    )
+                    typer.echo(f"  [task] → {tasks_file}")
+
+                elif disp in ("close", "discard"):
+                    if verbose:
+                        typer.echo(f"  [{disp}] {thread_text[:70]}…")
+
+                elif disp == "defer":
+                    deferred += 1
+                    if verbose:
+                        typer.echo(f"  [defer] skipped — no resurface mechanism yet")
+                    continue  # leave executed_at NULL
+
+                else:
+                    if verbose:
+                        typer.echo(f"  [unknown:{disp}] {thread_text[:70]}…")
+
+                if not dry_run:
+                    conn.execute(
+                        "UPDATE thread_triage SET executed_at = datetime('now') WHERE id = ?",
+                        (row_id,),
+                    )
+                acted += 1
+
+            except Exception as e:
+                typer.echo(f"  [error] Row {row_id}: {e}", err=True)
+                errors += 1
+
+        conn.commit()
+    finally:
+        conn.close()
+
+    return acted, deferred, errors
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 @app.command()
@@ -568,6 +724,46 @@ def classify(
 
     processed = run_classify(db_path, llm, dry_run, verbose, context_file=Path(context_file).expanduser())
     typer.echo(f"\nDone. Processed: {processed}, Skipped: 0")
+
+
+@app.command()
+def act(
+    db: Annotated[
+        str,
+        typer.Option("--db", help="Path to local-first.db."),
+    ] = str(DB_PATH),
+    captures_dir: Annotated[
+        str,
+        typer.Option("--captures-dir", "-C", help="Vault-relative folder for capture notes. Defaults to LOCAL_FIRST_CAPTURES_DIR or '_captures'."),
+    ] = CAPTURES_DIR,
+    tasks_file: Annotated[
+        str,
+        typer.Option("--tasks-file", "-t", help="Vault-relative path of the tasks file to append to. Defaults to LOCAL_FIRST_TASKS_FILE or '_TASKS.md'."),
+    ] = TASKS_FILE,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", "-n", help="Show what would be created/written without touching files or the DB."),
+    ] = False,
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose", "-v", help="Show per-row detail including close/discard."),
+    ] = False,
+):
+    """Phase 4 — act on reviewed rows: create capture notes, append tasks, stamp executed_at."""
+    db_path = Path(db).expanduser()
+
+    if not db_path.exists():
+        typer.echo(f"Error: DB not found at {db_path}.", err=True)
+        raise typer.Exit(1)
+
+    if not dry_run and not VAULT_PATH.exists():
+        typer.echo(f"Error: Vault not found at {VAULT_PATH}. Set OBSIDIAN_VAULT_PATH.", err=True)
+        raise typer.Exit(1)
+
+    acted, deferred, errors = run_act(db_path, VAULT_PATH, captures_dir, tasks_file, dry_run, verbose)
+
+    suffix = " (dry-run)" if dry_run else ""
+    typer.echo(f"\nDone{suffix}. Acted: {acted}, Deferred (skipped): {deferred}, Errors: {errors}")
 
 
 if __name__ == "__main__":

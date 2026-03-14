@@ -15,18 +15,24 @@ from thread_triage import (
     app,
     Classification,
     ThreadRow,
+    append_task,
+    create_capture_note,
     dates_for_days,
     dates_for_week,
     deduplicate,
     extract_threads,
     find_files_containing_dates,
     load_personal_context,
+    run_act,
     run_classify,
     run_scan,
+    slugify,
     week_label,
     write_rows,
+    CAPTURES_DIR,
     CONTEXT_FILE,
     SKIP_PATHS,
+    TASKS_FILE,
 )
 
 runner = CliRunner()
@@ -340,6 +346,180 @@ class TestWriteRows:
         assert inserted == 1
 
 
+class TestSlugify:
+    def test_basic_slug(self):
+        assert slugify("Create a tool spec for YouTube") == "create-a-tool-spec-for-youtube"
+
+    def test_strips_punctuation(self):
+        assert "." not in slugify("Create a spec. With punctuation!")
+
+    def test_respects_max_words(self):
+        slug = slugify("one two three four five six seven eight nine ten", max_words=4)
+        assert slug == "one-two-three-four"
+
+    def test_handles_empty(self):
+        assert slugify("") == ""
+
+
+class TestCreateCaptureNote:
+    def test_creates_file_in_captures_dir(self, tmp_path):
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        path = create_capture_note(
+            row_id=1, week="2026-W11", source_file="Timeline/note.md",
+            thread_text="An interesting idea about local-first tools",
+            suggested_action="Write a spec for a local-first tool registry",
+            rationale="Fills a gap in the suite.",
+            vault=vault, captures_dir="_captures", dry_run=False,
+        )
+        assert path.exists()
+        assert path.parent == vault / "_captures"
+
+    def test_note_contains_key_fields(self, tmp_path):
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        path = create_capture_note(
+            row_id=42, week="2026-W11", source_file="Timeline/note.md",
+            thread_text="My original thought here",
+            suggested_action="Build a thing",
+            rationale="Because it matters.",
+            vault=vault, captures_dir="_captures", dry_run=False,
+        )
+        content = path.read_text()
+        assert "triage_id: 42" in content
+        assert "My original thought here" in content
+        assert "Because it matters." in content
+
+    def test_dry_run_does_not_create_file(self, tmp_path):
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        path = create_capture_note(
+            row_id=1, week="2026-W11", source_file="note.md",
+            thread_text="A thought", suggested_action="Do a thing", rationale="Why.",
+            vault=vault, captures_dir="_captures", dry_run=True,
+        )
+        assert not path.exists()
+        assert not (vault / "_captures").exists()
+
+
+class TestAppendTask:
+    def test_appends_to_existing_file(self, tmp_path):
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        tasks = vault / "_TASKS.md"
+        tasks.write_text("# Tasks\n")
+        append_task(
+            suggested_action="Fix the scanner bug",
+            source_file="Timeline/note.md",
+            vault=vault, tasks_file="_TASKS.md", dry_run=False,
+        )
+        content = tasks.read_text()
+        assert "Fix the scanner bug" in content
+        assert "- [ ]" in content
+
+    def test_dry_run_does_not_write(self, tmp_path):
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        tasks = vault / "_TASKS.md"
+        tasks.write_text("# Tasks\n")
+        original = tasks.read_text()
+        append_task(
+            suggested_action="Fix the scanner bug",
+            source_file="Timeline/note.md",
+            vault=vault, tasks_file="_TASKS.md", dry_run=True,
+        )
+        assert tasks.read_text() == original
+
+
+class TestRunAct:
+    def _insert_row(self, conn, thread_text, human_disposition, suggested_action="Do the thing.", rationale="Because."):
+        conn.execute(
+            """INSERT INTO thread_triage
+               (week, source_file, thread_text, thread_type, suggested_action, rationale, human_disposition)
+               VALUES (?,?,?,?,?,?,?)""",
+            ("2026-W11", "Timeline/note.md", thread_text, "thought", suggested_action, rationale, human_disposition),
+        )
+
+    def test_creates_capture_note(self, tmp_path):
+        db = make_db(tmp_path)
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        conn = sqlite3.connect(db)
+        self._insert_row(conn, "An idea about local-first tools", "capture",
+                         suggested_action="Write a spec for a local-first tool registry")
+        conn.commit()
+        conn.close()
+
+        acted, deferred, errors = run_act(db, vault, "_captures", "_TASKS.md", dry_run=False, verbose=False)
+        assert acted == 1
+        assert errors == 0
+        assert any((vault / "_captures").iterdir())
+
+    def test_appends_task(self, tmp_path):
+        db = make_db(tmp_path)
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        (vault / "_TASKS.md").write_text("# Tasks\n")
+        conn = sqlite3.connect(db)
+        self._insert_row(conn, "Fix the classifier noise issue", "task",
+                         suggested_action="Add a noise filter to the classifier pipeline")
+        conn.commit()
+        conn.close()
+
+        run_act(db, vault, "_captures", "_TASKS.md", dry_run=False, verbose=False)
+        assert "noise filter" in (vault / "_TASKS.md").read_text()
+
+    def test_stamps_executed_at_for_close_and_discard(self, tmp_path):
+        db = make_db(tmp_path)
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        conn = sqlite3.connect(db)
+        self._insert_row(conn, "Something done already", "close")
+        self._insert_row(conn, "Just noise from the morning", "discard")
+        conn.commit()
+        conn.close()
+
+        acted, _, _ = run_act(db, vault, "_captures", "_TASKS.md", dry_run=False, verbose=False)
+        assert acted == 2
+        conn = sqlite3.connect(db)
+        stamped = conn.execute("SELECT COUNT(*) FROM thread_triage WHERE executed_at IS NOT NULL").fetchone()[0]
+        conn.close()
+        assert stamped == 2
+
+    def test_skips_defers(self, tmp_path):
+        db = make_db(tmp_path)
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        conn = sqlite3.connect(db)
+        self._insert_row(conn, "Worth revisiting later", "defer")
+        conn.commit()
+        conn.close()
+
+        acted, deferred, errors = run_act(db, vault, "_captures", "_TASKS.md", dry_run=False, verbose=False)
+        assert acted == 0
+        assert deferred == 1
+        conn = sqlite3.connect(db)
+        unstamped = conn.execute("SELECT COUNT(*) FROM thread_triage WHERE executed_at IS NULL").fetchone()[0]
+        conn.close()
+        assert unstamped == 1  # defer left untouched
+
+    def test_dry_run_creates_no_files_and_stamps_nothing(self, tmp_path):
+        db = make_db(tmp_path)
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        conn = sqlite3.connect(db)
+        self._insert_row(conn, "A capture idea worth noting", "capture")
+        conn.commit()
+        conn.close()
+
+        run_act(db, vault, "_captures", "_TASKS.md", dry_run=True, verbose=False)
+        assert not (vault / "_captures").exists()
+        conn = sqlite3.connect(db)
+        unstamped = conn.execute("SELECT COUNT(*) FROM thread_triage WHERE executed_at IS NULL").fetchone()[0]
+        conn.close()
+        assert unstamped == 1
+
+
 class TestLoadPersonalContext:
     def test_returns_empty_string_when_file_missing(self, tmp_path):
         missing = tmp_path / "no-such-file.md"
@@ -360,6 +540,56 @@ class TestLoadPersonalContext:
 
 
 # ── Integration tests ─────────────────────────────────────────────────────────
+
+class TestActCommand:
+    def test_act_creates_captures_and_stamps(self, tmp_path):
+        db = make_db(tmp_path)
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        conn = sqlite3.connect(db)
+        conn.execute(
+            """INSERT INTO thread_triage
+               (week, source_file, thread_text, thread_type, suggested_action, rationale, human_disposition)
+               VALUES (?,?,?,?,?,?,?)""",
+            ("2026-W11", "note.md", "Great idea about local-first agent design", "thought",
+             "Write a spec for a local-first agent orchestrator", "Key gap in the suite.", "capture"),
+        )
+        conn.commit()
+        conn.close()
+
+        with patch("thread_triage.VAULT_PATH", vault):
+            result = runner.invoke(app, [
+                "act", "--db", str(db),
+                "--captures-dir", "_captures",
+                "--verbose",
+            ])
+
+        assert result.exit_code == 0, result.output
+        assert "capture" in result.output
+        assert any((vault / "_captures").iterdir())
+
+    def test_act_dry_run(self, tmp_path):
+        db = make_db(tmp_path)
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        conn = sqlite3.connect(db)
+        conn.execute(
+            """INSERT INTO thread_triage
+               (week, source_file, thread_text, thread_type, suggested_action, rationale, human_disposition)
+               VALUES (?,?,?,?,?,?,?)""",
+            ("2026-W11", "note.md", "Another idea", "thought",
+             "Write a spec", "Good reason.", "capture"),
+        )
+        conn.commit()
+        conn.close()
+
+        with patch("thread_triage.VAULT_PATH", vault):
+            result = runner.invoke(app, ["act", "--db", str(db), "--dry-run"])
+
+        assert result.exit_code == 0, result.output
+        assert "dry-run" in result.output
+        assert not (vault / "_captures").exists()
+
 
 class TestScanCommand:
     def test_dry_run_shows_threads(self, tmp_path):
