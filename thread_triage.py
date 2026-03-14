@@ -46,6 +46,23 @@ SKIP_PATHS: set[str] = {
 # First words that indicate a line is code/SQL, not a natural-language thought
 _SQL_KEYWORDS = {"select", "insert", "update", "delete", "create", "drop", "alter", "with"}
 
+# Obsidian task metadata patterns to strip before checking meaningful word count
+_TASK_METADATA_RE = re.compile(
+    r"📅\s*\d{4}-\d{2}-\d{2}"   # due date
+    r"|⏳\s*\d{4}-\d{2}-\d{2}"  # scheduled date
+    r"|✅\s*\d{4}-\d{2}-\d{2}"  # done date
+    r"|\[\[.*?\]\]"              # Obsidian wiki links
+    r"|https?://\S+"             # URLs
+    r"|#\w+"                     # tags
+)
+
+
+def _meaningful_word_count(text: str) -> int:
+    """Count words remaining after stripping Obsidian task metadata and emojis."""
+    stripped = _TASK_METADATA_RE.sub(" ", text)
+    stripped = re.sub(r"[^\w\s]", " ", stripped)  # emojis, remaining punctuation
+    return len(stripped.split())
+
 app = typer.Typer(help=__doc__)
 
 
@@ -161,30 +178,42 @@ def extract_threads(path: Path, vault: Path) -> list[ThreadRow]:
     for i, line in enumerate(lines[start:], start):
         section = current_section(lines, i)
         section_lower = section.lower() if section else ""
+        in_thought_section = any(s in section_lower for s in THOUGHT_SECTIONS)
 
-        # Unchecked tasks
-        task_match = re.match(r"^\s*-\s+\[ \]\s+(.+)", line)
-        if task_match:
-            text = task_match.group(1).strip()
-            if text:
-                threads.append(ThreadRow(
-                    week="",  # filled in by caller
-                    source_file=rel,
-                    source_section=section,
-                    thread_text=text,
-                    thread_type="task",
-                ))
+        # Skip completed [x] and cancelled [-] task markers everywhere
+        if re.match(r"^\s*[-*]\s+\[[-xX]\]", line):
             continue
 
-        # Thoughts / morning pages — non-empty bullet lines in thought sections
-        if any(s in section_lower for s in THOUGHT_SECTIONS):
+        # Unchecked tasks — only from thought sections (other sections are managed by
+        # the Obsidian Tasks plugin and don't need surfacing here)
+        task_match = re.match(r"^\s*-\s+\[ \]\s+(.+)", line)
+        if task_match:
+            if in_thought_section:
+                text = task_match.group(1).strip()
+                if "🔁" in text:
+                    continue  # recurring — already tracked
+                if _meaningful_word_count(text) < 3:
+                    continue  # fragment with no real content
+                if text:
+                    threads.append(ThreadRow(
+                        week="",  # filled in by caller
+                        source_file=rel,
+                        source_section=section,
+                        thread_text=text,
+                        thread_type="task",
+                    ))
+            continue  # always skip thought check for task-marker lines
+
+        # Thoughts — non-empty bullet lines in thought sections
+        if in_thought_section:
             thought_match = re.match(r"^\s*[-*]\s+(.+)", line)
             if thought_match:
                 text = thought_match.group(1).strip()
-                # Skip sub-bullets that are just short labels
                 first_word = text.split()[0].lower().rstrip(";,(\\*") if text else ""
                 if first_word in _SQL_KEYWORDS:
                     continue
+                if "🔁" in text:
+                    continue  # recurring reminder, not a thread
                 if text and len(text.split()) >= 4:
                     threads.append(ThreadRow(
                         week="",
@@ -210,24 +239,42 @@ def deduplicate(rows: list[ThreadRow]) -> list[ThreadRow]:
 
 
 def write_rows(db: Path, rows: list[ThreadRow]) -> int:
-    """Insert rows into thread_triage, skipping exact-text duplicates for the week.
-    Returns count of new rows inserted."""
+    """Insert rows into thread_triage, skipping duplicates.
+
+    Skips a row if:
+    - The same text already exists for this week (same-week dedup), OR
+    - The same text was already actioned in a prior week (human_disposition IS NOT NULL)
+
+    Returns count of new rows inserted.
+    """
     conn = sqlite3.connect(db)
     inserted = 0
     try:
         for row in rows:
+            # Same-week dedup: don't insert twice for the same week
             existing = conn.execute(
                 "SELECT id FROM thread_triage WHERE week = ? AND thread_text = ?",
                 (row.week, row.thread_text),
             ).fetchone()
-            if not existing:
-                conn.execute(
-                    """INSERT INTO thread_triage
-                       (week, source_file, source_section, thread_text, thread_type)
-                       VALUES (?, ?, ?, ?, ?)""",
-                    (row.week, row.source_file, row.source_section, row.thread_text, row.thread_type),
-                )
-                inserted += 1
+            if existing:
+                continue
+
+            # Cross-week dedup: skip if already actioned in a prior week
+            prior_actioned = conn.execute(
+                """SELECT id FROM thread_triage
+                   WHERE thread_text = ? AND human_disposition IS NOT NULL AND week != ?""",
+                (row.thread_text, row.week),
+            ).fetchone()
+            if prior_actioned:
+                continue
+
+            conn.execute(
+                """INSERT INTO thread_triage
+                   (week, source_file, source_section, thread_text, thread_type)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (row.week, row.source_file, row.source_section, row.thread_text, row.thread_type),
+            )
+            inserted += 1
         conn.commit()
     finally:
         conn.close()

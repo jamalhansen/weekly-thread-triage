@@ -7,6 +7,11 @@ Created: 2026-03-12
 - I keep thinking about building a read-later queue for the content discovery agent
 - The weekly review would be better if it pulled in kept articles automatically
 - Need to figure out the SQLite MCP server setup before anything else
+- [ ] Set up SQLite MCP server
+- [ ] Write spec for tool 34
+- [ ] Walk the dog 🔁 every day
+- [x] Already finished writing morning pages earlier
+- [-] Decided not to pursue this idea
 
 ## Thoughts
 
@@ -16,8 +21,8 @@ Created: 2026-03-12
 ## Actions
 
 - [x] Push blog post draft reviewer changes
-- [ ] Set up SQLite MCP server
-- [ ] Write spec for tool 34
+- [ ] This task is in Actions and should not be extracted
+- [ ] Neither should this one
 
 ## Voice Journal
 

@@ -93,6 +93,7 @@ class TestDatesForDays:
 
 class TestExtractThreads:
     def test_extracts_unchecked_tasks(self, tmp_path):
+        """Tasks in thought sections (Morning Pages) are extracted."""
         vault = tmp_path
         note = vault / "Timeline" / "2026-03-12.md"
         note.parent.mkdir(parents=True)
@@ -105,12 +106,22 @@ class TestExtractThreads:
         assert any("spec for tool 34" in t.thread_text for t in tasks)
 
     def test_does_not_extract_checked_tasks(self, tmp_path):
+        """[x] completed tasks are skipped even inside thought sections."""
         vault = tmp_path
         note = vault / "note.md"
-        note.write_text("- [x] Already done\n- [ ] Still open\n")
+        note.write_text("## Morning Pages\n\n- [x] Already done\n- [ ] Still open task here\n")
         threads = extract_threads(note, vault)
         assert len(threads) == 1
         assert "Still open" in threads[0].thread_text
+
+    def test_does_not_extract_cancelled_tasks(self, tmp_path):
+        """[-] cancelled tasks are skipped even inside thought sections."""
+        vault = tmp_path
+        note = vault / "note.md"
+        note.write_text("## Morning Pages\n\n- [-] Decided not to do this\n- [ ] Still want to do this one\n")
+        threads = extract_threads(note, vault)
+        assert len(threads) == 1
+        assert "Still want" in threads[0].thread_text
 
     def test_extracts_thoughts(self, tmp_path):
         vault = tmp_path
@@ -146,12 +157,52 @@ class TestExtractThreads:
         assert not any("select" in t.lower() for t in texts)
         assert any("weekly review" in t for t in texts)
 
-    def test_section_attribution(self, tmp_path):
+    def test_skips_tasks_in_non_thought_sections(self, tmp_path):
+        """Tasks under structured sections like Actions are not extracted.
+        Those are managed by the Obsidian Tasks plugin."""
         vault = tmp_path
         note = vault / "note.md"
-        note.write_text("## Actions\n\n- [ ] Fix the scanner bug\n")
+        note.write_text("## Actions\n\n- [ ] Fix the scanner bug\n- [ ] Write the report\n")
         threads = extract_threads(note, vault)
-        assert threads[0].source_section == "Actions"
+        assert len(threads) == 0
+
+    def test_skips_recurring_tasks(self, tmp_path):
+        """Tasks containing the 🔁 emoji are skipped — already tracked by Tasks plugin."""
+        vault = tmp_path
+        note = vault / "note.md"
+        note.write_text(
+            "## Morning Pages\n\n"
+            "- [ ] Walk the dog 🔁 every day\n"
+            "- [ ] Set up SQLite MCP server\n"
+        )
+        threads = extract_threads(note, vault)
+        tasks = [t for t in threads if t.thread_type == "task"]
+        assert len(tasks) == 1
+        assert "SQLite" in tasks[0].thread_text
+
+    def test_skips_task_fragments(self, tmp_path):
+        """Tasks with fewer than 3 meaningful words after stripping metadata are skipped."""
+        vault = tmp_path
+        note = vault / "note.md"
+        note.write_text(
+            "## Morning Pages\n\n"
+            "- [ ] 📅 2026-03-14\n"              # just a date — no meaningful words
+            "- [ ] TBD\n"                          # one word
+            "- [ ] Write the SQLite MCP spec\n"   # 5 meaningful words — keep
+        )
+        threads = extract_threads(note, vault)
+        tasks = [t for t in threads if t.thread_type == "task"]
+        assert len(tasks) == 1
+        assert "SQLite MCP spec" in tasks[0].thread_text
+
+    def test_section_attribution(self, tmp_path):
+        """Source section is recorded correctly for extracted tasks."""
+        vault = tmp_path
+        note = vault / "note.md"
+        note.write_text("## Morning Pages\n\n- [ ] Fix the scanner bug here\n")
+        threads = extract_threads(note, vault)
+        assert len(threads) == 1
+        assert threads[0].source_section == "Morning Pages"
 
 
 class TestFindFilesContainingDates:
@@ -224,7 +275,7 @@ class TestDeduplicate:
 class TestWriteRows:
     def test_inserts_new_rows(self, tmp_path):
         db = make_db(tmp_path)
-        rows = [ThreadRow("2026-W11", "a.md", "Actions", "Fix scanner", "task")]
+        rows = [ThreadRow("2026-W11", "a.md", "Morning Pages", "Fix scanner bug here", "task")]
         inserted = write_rows(db, rows)
         assert inserted == 1
 
@@ -240,12 +291,51 @@ class TestWriteRows:
         inserted = write_rows(db, rows)  # second write
         assert inserted == 0
 
-    def test_allows_same_text_different_week(self, tmp_path):
+    def test_allows_same_text_different_week_when_not_actioned(self, tmp_path):
+        """Same text in different weeks is allowed when not yet actioned."""
         db = make_db(tmp_path)
         r1 = [ThreadRow("2026-W11", "a.md", None, "Fix scanner", "task")]
         r2 = [ThreadRow("2026-W12", "a.md", None, "Fix scanner", "task")]
         assert write_rows(db, r1) == 1
         assert write_rows(db, r2) == 1
+
+    def test_skips_previously_actioned_in_different_week(self, tmp_path):
+        """If text was actioned (human_disposition set) in a prior week, don't insert again."""
+        db = make_db(tmp_path)
+
+        # Insert W11 row and mark it as actioned
+        conn = sqlite3.connect(db)
+        conn.execute(
+            """INSERT INTO thread_triage (week, source_file, thread_text, thread_type, human_disposition)
+               VALUES (?, ?, ?, ?, ?)""",
+            ("2026-W11", "a.md", "Fix the scanner bug", "task", "close"),
+        )
+        conn.commit()
+        conn.close()
+
+        # Attempt to insert same text for W12 — should be skipped
+        r2 = [ThreadRow("2026-W12", "a.md", None, "Fix the scanner bug", "task")]
+        inserted = write_rows(db, r2)
+        assert inserted == 0
+
+    def test_allows_same_text_next_week_if_not_yet_actioned(self, tmp_path):
+        """If prior week's row has no human_disposition, allow re-insertion next week."""
+        db = make_db(tmp_path)
+
+        # Insert W11 row — no human_disposition (still pending)
+        conn = sqlite3.connect(db)
+        conn.execute(
+            """INSERT INTO thread_triage (week, source_file, thread_text, thread_type)
+               VALUES (?, ?, ?, ?)""",
+            ("2026-W11", "a.md", "Fix the scanner bug", "task"),
+        )
+        conn.commit()
+        conn.close()
+
+        # W12 insert of the same text should succeed (not actioned yet)
+        r2 = [ThreadRow("2026-W12", "a.md", None, "Fix the scanner bug", "task")]
+        inserted = write_rows(db, r2)
+        assert inserted == 1
 
 
 # ── Integration tests ─────────────────────────────────────────────────────────
