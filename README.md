@@ -83,6 +83,16 @@ uv run python thread_triage.py classify --provider anthropic --context-file ~/.l
 # Dry-run classification
 uv run python thread_triage.py classify --dry-run --verbose
 
+# Phase 3 helper — see what's pending review and any past-due defers
+uv run python thread_triage.py review
+
+# Filter to a specific week
+uv run python thread_triage.py review --week 2026-W11
+
+# Add a new row during Phase 3 review (no raw SQL needed)
+uv run python thread_triage.py add "An idea I want to capture"
+uv run python thread_triage.py add "Fix the scanner edge case" --type task --week 2026-W11
+
 # Act on all reviewed rows (create notes, append tasks)
 uv run python thread_triage.py act
 
@@ -116,6 +126,23 @@ uv run python thread_triage.py act --captures-dir "_captures" --tasks-file "_TAS
 | `--dry-run` | `-n` | false | Show classifications without writing |
 | `--verbose` | `-v` | false | Show row-by-row progress |
 | `--debug` | `-d` | false | Show raw LLM prompts and responses |
+
+### `review`
+
+| Flag | Short | Default | Description |
+|------|-------|---------|-------------|
+| `--db` | | `LOCAL_FIRST_DB` or auto-discovered | Path to SQLite DB |
+| `--week` | `-w` | — | Filter unreviewed rows to a specific ISO week |
+
+### `add`
+
+| Flag | Short | Default | Description |
+|------|-------|---------|-------------|
+| `--db` | | `LOCAL_FIRST_DB` or auto-discovered | Path to SQLite DB |
+| `--type` | `-t` | `thought` | Thread type: `thought` or `task` |
+| `--week` | `-w` | current week | ISO week to assign the row to |
+| `--source` | `-s` | `manual` | Source file reference shown in review output |
+| `--dry-run` | `-n` | false | Show what would be added without writing |
 
 ### `act`
 

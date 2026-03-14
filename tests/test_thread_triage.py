@@ -39,6 +39,17 @@ from thread_triage import (
     TASKS_FILE,
 )
 
+# ── Helpers (continued) ───────────────────────────────────────────────────────
+
+def _insert_reviewed(conn, thread_text, human_disposition, resurface_after=None):
+    """Insert a row with human_disposition already set (simulates post-Phase-3 state)."""
+    conn.execute(
+        """INSERT INTO thread_triage
+           (week, source_file, thread_text, thread_type, human_disposition, resurface_after)
+           VALUES (?,?,?,?,?,?)""",
+        ("2026-W11", "a.md", thread_text, "thought", human_disposition, resurface_after),
+    )
+
 runner = CliRunner()
 
 FIXTURE_NOTE = Path(__file__).parent / "fixtures" / "sample_daily_note.md"
@@ -216,7 +227,7 @@ class TestExtractThreads:
         assert "SQLite" in tasks[0].thread_text
 
     def test_skips_task_fragments(self, tmp_path):
-        """Tasks with fewer than 3 meaningful words after stripping metadata are skipped."""
+        """Tasks with fewer than 4 meaningful words after stripping metadata are skipped."""
         vault = tmp_path
         note = vault / "note.md"
         note.write_text(
@@ -784,3 +795,78 @@ class TestClassifyCommand:
         assert len(captured_prompts) == 1
         assert "content-discovery-agent" in captured_prompts[0]
         assert "Personal Context" in captured_prompts[0]
+
+
+class TestReviewCommand:
+    def test_shows_pending_rows(self, tmp_path):
+        db = make_db(tmp_path)
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "INSERT INTO thread_triage (week, source_file, thread_text, thread_type, suggested_disposition) VALUES (?,?,?,?,?)",
+            ("2026-W11", "a.md", "An idea worth reviewing", "thought", "capture"),
+        )
+        conn.commit()
+        conn.close()
+
+        result = runner.invoke(app, ["review", "--db", str(db)])
+        assert result.exit_code == 0, result.output
+        assert "Pending review: 1 row" in result.output
+        assert "An idea worth reviewing" in result.output
+
+    def test_shows_past_due_defers(self, tmp_path):
+        db = make_db(tmp_path)
+        conn = sqlite3.connect(db)
+        _insert_reviewed(conn, "Should have resurfaced by now", "defer", resurface_after="2020-01-01")
+        conn.commit()
+        conn.close()
+
+        result = runner.invoke(app, ["review", "--db", str(db)])
+        assert result.exit_code == 0, result.output
+        assert "Past-due defers" in result.output
+        assert "Should have resurfaced" in result.output
+
+    def test_shows_nothing_when_empty(self, tmp_path):
+        db = make_db(tmp_path)
+        result = runner.invoke(app, ["review", "--db", str(db)])
+        assert result.exit_code == 0, result.output
+        assert "Nothing pending review" in result.output
+
+
+class TestAddCommand:
+    def test_adds_row_to_db(self, tmp_path):
+        db = make_db(tmp_path)
+        result = runner.invoke(app, [
+            "add", "A brand new idea captured during review",
+            "--db", str(db), "--week", "2026-W11",
+        ])
+        assert result.exit_code == 0, result.output
+        conn = sqlite3.connect(db)
+        row = conn.execute("SELECT thread_text, thread_type, source_file FROM thread_triage").fetchone()
+        conn.close()
+        assert row[0] == "A brand new idea captured during review"
+        assert row[1] == "thought"
+        assert row[2] == "manual"
+
+    def test_dry_run_does_not_write(self, tmp_path):
+        db = make_db(tmp_path)
+        result = runner.invoke(app, [
+            "add", "This should not be saved",
+            "--db", str(db), "--dry-run",
+        ])
+        assert result.exit_code == 0, result.output
+        assert "dry-run" in result.output
+        conn = sqlite3.connect(db)
+        count = conn.execute("SELECT COUNT(*) FROM thread_triage").fetchone()[0]
+        conn.close()
+        assert count == 0
+
+    def test_respects_type_flag(self, tmp_path):
+        db = make_db(tmp_path)
+        runner.invoke(app, [
+            "add", "Do the thing now",
+            "--db", str(db), "--type", "task", "--week", "2026-W11",
+        ])
+        conn = sqlite3.connect(db)
+        row = conn.execute("SELECT thread_type FROM thread_triage").fetchone()
+        conn.close()
+        assert row[0] == "task"

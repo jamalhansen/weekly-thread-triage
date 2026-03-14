@@ -235,8 +235,8 @@ def extract_threads(path: Path, vault: Path) -> list[ThreadRow]:
                 text = task_match.group(1).strip()
                 if "🔁" in text:
                     continue  # recurring — already tracked
-                if _meaningful_word_count(text) < 3:
-                    continue  # fragment with no real content
+                if _meaningful_word_count(text) < 4:
+                    continue  # fragment with no real content (fewer than 4 meaningful words)
                 if text:
                     threads.append(ThreadRow(
                         week="",  # filled in by caller
@@ -756,6 +756,123 @@ def classify(
 
     processed = run_classify(db_path, llm, dry_run, verbose, context_file=Path(context_file).expanduser())
     typer.echo(f"\nDone. Processed: {processed}, Skipped: 0")
+
+
+@app.command()
+def review(
+    db: Annotated[
+        str,
+        typer.Option("--db", help="Path to local-first.db."),
+    ] = str(DB_PATH),
+    week: Annotated[
+        Optional[str],
+        typer.Option("--week", "-w", help="Filter unreviewed rows to a specific ISO week, e.g. 2026-W11."),
+    ] = None,
+):
+    """Phase 3 helper — show past-due defers and rows pending human review."""
+    db_path = Path(db).expanduser()
+    if not db_path.exists():
+        typer.echo(f"Error: DB not found at {db_path}.", err=True)
+        raise typer.Exit(1)
+
+    conn = sqlite3.connect(db_path)
+    try:
+        # Past-due defers whose resurface_after has passed
+        defers = conn.execute(
+            """SELECT id, week, source_file, thread_text, resurface_after
+               FROM thread_triage
+               WHERE human_disposition = 'defer'
+                 AND executed_at IS NULL
+                 AND resurface_after IS NOT NULL
+                 AND resurface_after <= date('now')
+               ORDER BY resurface_after"""
+        ).fetchall()
+
+        if defers:
+            typer.echo(f"\n!  Past-due defers ({len(defers)}) — ready to resurface:\n")
+            for row_id, wk, src, text, resurface in defers:
+                typer.echo(f"  [{row_id}] due {resurface} | {wk} | {src}")
+                typer.echo(f"    {text[:80]}{'...' if len(text) > 80 else ''}")
+
+        # Rows not yet reviewed (no human_disposition)
+        if week:
+            pending = conn.execute(
+                """SELECT id, week, source_file, thread_text, suggested_disposition, suggested_action
+                   FROM thread_triage
+                   WHERE human_disposition IS NULL AND week = ?
+                   ORDER BY created_at""",
+                (week,),
+            ).fetchall()
+        else:
+            pending = conn.execute(
+                """SELECT id, week, source_file, thread_text, suggested_disposition, suggested_action
+                   FROM thread_triage
+                   WHERE human_disposition IS NULL
+                   ORDER BY week, created_at"""
+            ).fetchall()
+
+        typer.echo(f"\nPending review: {len(pending)} row{'s' if len(pending) != 1 else ''}")
+        for row_id, wk, src, text, sugg_disp, sugg_action in pending:
+            typer.echo(f"\n  [{row_id}] [{wk}] {src}")
+            typer.echo(f"    {text[:80]}{'...' if len(text) > 80 else ''}")
+            if sugg_disp:
+                typer.echo(f"    -> {sugg_disp}: {(sugg_action or '')[:70]}")
+
+        if not defers and not pending:
+            typer.echo("Nothing pending review.")
+    finally:
+        conn.close()
+
+
+@app.command()
+def add(
+    text: Annotated[str, typer.Argument(help="Thread text to add.")],
+    db: Annotated[
+        str,
+        typer.Option("--db", help="Path to local-first.db."),
+    ] = str(DB_PATH),
+    thread_type: Annotated[
+        str,
+        typer.Option("--type", "-t", help="Thread type: thought or task."),
+    ] = "thought",
+    week: Annotated[
+        Optional[str],
+        typer.Option("--week", "-w", help="ISO week, e.g. 2026-W11. Defaults to current week."),
+    ] = None,
+    source: Annotated[
+        str,
+        typer.Option("--source", "-s", help="Source file reference shown in review output."),
+    ] = "manual",
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", "-n", help="Show what would be added without writing."),
+    ] = False,
+):
+    """Add a new thread row during Phase 3 review (no raw SQL needed)."""
+    db_path = Path(db).expanduser()
+    if not db_path.exists():
+        typer.echo(f"Error: DB not found at {db_path}.", err=True)
+        raise typer.Exit(1)
+
+    current_week = week or week_label(date.today())
+
+    if dry_run:
+        typer.echo(f"[dry-run] Would add: [{thread_type}] {text[:80]}")
+        typer.echo(f"  week: {current_week}  source: {source}")
+        return
+
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            """INSERT INTO thread_triage (week, source_file, thread_text, thread_type)
+               VALUES (?, ?, ?, ?)""",
+            (current_week, source, text, thread_type),
+        )
+        conn.commit()
+        row_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        typer.echo(f"Added row {row_id}: [{thread_type}] {text[:60]}{'...' if len(text) > 60 else ''}")
+    finally:
+        conn.close()
 
 
 @app.command()
