@@ -10,7 +10,7 @@ Two headless phases write to SQLite; Phase 3 review happens in a Claude chat ses
 Searches all vault files for date strings from the target week. Extracts unchecked tasks (`- [ ]`) and meaningful bullet points from thought sections (morning pages, reflections, voice journal). Writes new rows to the `thread_triage` table in `local-first.db`.
 
 **Phase 2 — classify** (`thread_triage classify`):
-Sends each unclassified row to an LLM with a prompt asking for a disposition (`capture | task | defer | close | discard`), a concrete suggested action, and a one-sentence rationale. Updates rows in place.
+Sends each unclassified row to an LLM with a prompt asking for a disposition (`capture | task | defer | close | discard`), a concrete suggested action, and a one-sentence rationale. Updates rows in place. Classification quality improves significantly when a personal context file is provided (see [Personal context file](#personal-context-file)).
 
 **Phase 3 — review** (Claude chat):
 Open a chat session with the SQLite MCP server attached. Review rows, update `human_disposition`, and act on them.
@@ -64,6 +64,9 @@ uv run python thread_triage.py classify --provider anthropic
 # Classify with a specific model
 uv run python thread_triage.py classify --provider ollama --model llama3.2:3b
 
+# Classify using a personal context file (strongly recommended — see below)
+uv run python thread_triage.py classify --provider anthropic --context-file ~/.local-first/thread-triage-context.md
+
 # Dry-run classification
 uv run python thread_triage.py classify --dry-run --verbose
 ```
@@ -87,6 +90,7 @@ uv run python thread_triage.py classify --dry-run --verbose
 | `--provider` | `-p` | `MODEL_PROVIDER` or `ollama` | LLM provider |
 | `--model` | `-m` | provider default | Override provider's default model |
 | `--db` | | `LOCAL_FIRST_DB` or `~/.local-first/local-first.db` | Path to SQLite DB |
+| `--context-file` | `-c` | `LOCAL_FIRST_THREAD_CONTEXT` or `~/.local-first/thread-triage-context.md` | Personal context file prepended to the classify prompt |
 | `--dry-run` | `-n` | false | Show classifications without writing |
 | `--verbose` | `-v` | false | Show row-by-row progress |
 | `--debug` | `-d` | false | Show raw LLM prompts and responses |
@@ -98,6 +102,8 @@ uv run python thread_triage.py classify --dry-run --verbose
 | `OBSIDIAN_VAULT_PATH` | Path to vault root (auto-detected if unset) |
 | `LOCAL_FIRST_DB` | Path to `local-first.db` (default: `~/.local-first/local-first.db`) |
 | `MODEL_PROVIDER` | Default LLM provider (`ollama`, `anthropic`, `gemini`, `groq`, `deepseek`) |
+| `LOCAL_FIRST_THREAD_CONTEXT` | Path to personal context file (default: `~/.local-first/thread-triage-context.md`) |
+| `LOCAL_FIRST_SKIP_PATHS` | Colon-separated path fragments to exclude from scanning (e.g. `_marketing:_strategy`) |
 
 ## Dispositions
 
@@ -108,6 +114,53 @@ uv run python thread_triage.py classify --dry-run --verbose
 | `defer` | Worth revisiting but not actionable this week |
 | `close` | Already done or no longer relevant |
 | `discard` | Noise — captured in the moment, no lasting value |
+
+## Personal context file
+
+The classify prompt is generic by default, which works but produces noisier results.
+You can dramatically improve classification quality by providing a personal context file
+that tells the LLM about your specific setup — without putting any of that private
+information in the repo.
+
+**The file lives at `~/.local-first/thread-triage-context.md`** (outside the repo, never
+tracked by git). If it doesn't exist, classify works exactly as before.
+
+A typical context file might include:
+
+- Your active tool suite (so the LLM knows what "build a read-later queue" refers to)
+- Workflow rules ("tasks in Actions sections are managed by the Obsidian Tasks plugin")
+- Recurring patterns to recognise ("🔁 tasks are already tracked — mark as close")
+- Your blog or project context (so the LLM can distinguish valuable ideas from noise)
+
+```markdown
+## Tool Suite
+
+The following tools are already built and active:
+- content-discovery-agent — scores RSS/Bluesky feeds
+- transcription-summarizer — voice memo → Obsidian entries
+...
+
+## Task Management
+
+Tasks in structured sections (Actions, etc.) are already managed by the Obsidian Tasks
+plugin. Prefer `close` for these if they surface.
+
+## Disposition Guide
+
+- `capture` — a distinct idea worth a spec or blog post outline
+- `task` — concrete work NOT already in the Tasks plugin
+- `close` — done, shipped, or managed elsewhere
+- `discard` — fleeting thought with no lasting value
+```
+
+Override the default path via env var or `--context-file`:
+
+```bash
+export LOCAL_FIRST_THREAD_CONTEXT="~/vaults/my-vault/triage-context.md"
+
+# or per-run:
+uv run python thread_triage.py classify --context-file ~/my-context.md
+```
 
 ## Project structure
 

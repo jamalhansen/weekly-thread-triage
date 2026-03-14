@@ -20,10 +20,12 @@ from thread_triage import (
     deduplicate,
     extract_threads,
     find_files_containing_dates,
+    load_personal_context,
     run_classify,
     run_scan,
     week_label,
     write_rows,
+    CONTEXT_FILE,
     SKIP_PATHS,
 )
 
@@ -338,6 +340,25 @@ class TestWriteRows:
         assert inserted == 1
 
 
+class TestLoadPersonalContext:
+    def test_returns_empty_string_when_file_missing(self, tmp_path):
+        missing = tmp_path / "no-such-file.md"
+        assert load_personal_context(missing) == ""
+
+    def test_returns_file_content_when_present(self, tmp_path):
+        ctx = tmp_path / "context.md"
+        ctx.write_text("## Tool Suite\n\n- content-discovery-agent\n- transcription-summarizer\n")
+        result = load_personal_context(ctx)
+        assert "content-discovery-agent" in result
+        assert "transcription-summarizer" in result
+
+    def test_strips_leading_trailing_whitespace(self, tmp_path):
+        ctx = tmp_path / "context.md"
+        ctx.write_text("\n\n## Context\n\n- Some tool\n\n\n")
+        result = load_personal_context(ctx)
+        assert result == result.strip()
+
+
 # ── Integration tests ─────────────────────────────────────────────────────────
 
 class TestScanCommand:
@@ -436,3 +457,39 @@ class TestClassifyCommand:
         row = conn.execute("SELECT suggested_disposition FROM thread_triage").fetchone()
         conn.close()
         assert row[0] is None  # not written
+
+    def test_context_file_is_prepended_to_prompt(self, tmp_path):
+        """When a context file exists, its contents reach the LLM via the system prompt."""
+        db = make_db(tmp_path)
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "INSERT INTO thread_triage (week, source_file, thread_text, thread_type) VALUES (?,?,?,?)",
+            ("2026-W11", "a.md", "Build a read-later queue for kept articles", "thought"),
+        )
+        conn.commit()
+        conn.close()
+
+        ctx_file = tmp_path / "context.md"
+        ctx_file.write_text("## Tool Suite\n\n- content-discovery-agent\n- weekly-thread-triage\n")
+
+        captured_prompts: list[str] = []
+
+        class CapturingProvider:
+            def complete(self, system: str, user: str) -> str:
+                captured_prompts.append(system)
+                return json.dumps({
+                    "suggested_disposition": "capture",
+                    "suggested_action": "Write a spec.",
+                    "rationale": "Good idea.",
+                })
+
+        with patch("thread_triage.resolve_provider", return_value=CapturingProvider()):
+            result = runner.invoke(app, [
+                "classify", "--db", str(db),
+                "--context-file", str(ctx_file),
+            ])
+
+        assert result.exit_code == 0, result.output
+        assert len(captured_prompts) == 1
+        assert "content-discovery-agent" in captured_prompts[0]
+        assert "Personal Context" in captured_prompts[0]

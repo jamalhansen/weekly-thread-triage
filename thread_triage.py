@@ -43,6 +43,21 @@ SKIP_PATHS: set[str] = {
     if p.strip()
 }
 
+# Optional personal context file — prepended to the classify system prompt at runtime.
+# Lives outside the repo so private details (tool names, workflows) never hit git.
+# Override path with LOCAL_FIRST_THREAD_CONTEXT env var; see README for format.
+CONTEXT_FILE = Path(
+    os.environ.get("LOCAL_FIRST_THREAD_CONTEXT", "~/.local-first/thread-triage-context.md")
+).expanduser()
+
+
+def load_personal_context(path: Path) -> str:
+    """Return the personal context file contents, or '' if the file doesn't exist."""
+    if path.exists():
+        return path.read_text(encoding="utf-8").strip()
+    return ""
+
+
 # First words that indicate a line is code/SQL, not a natural-language thought
 _SQL_KEYWORDS = {"select", "insert", "update", "delete", "create", "drop", "alter", "with"}
 
@@ -359,6 +374,7 @@ def classify_row(
     thread_text: str,
     thread_type: str,
     context: str,
+    system_prompt: str = SYSTEM_PROMPT,
 ) -> Classification:
     """Call LLM to classify a single thread row."""
     import json
@@ -375,7 +391,7 @@ Respond with JSON only:
   "rationale": "one sentence explaining why"
 }}"""
 
-    raw = llm.complete(SYSTEM_PROMPT, user)
+    raw = llm.complete(system_prompt, user)
     raw = re.sub(r"^```(?:json)?\n?", "", raw.strip())
     raw = re.sub(r"\n?```$", "", raw.strip())
     data = json.loads(raw)
@@ -387,8 +403,14 @@ def run_classify(
     llm,
     dry_run: bool,
     verbose: bool,
+    context_file: Path = CONTEXT_FILE,
 ) -> int:
     """Run Phase 2: classify all pending rows. Returns count processed."""
+    personal_context = load_personal_context(context_file)
+    effective_prompt = SYSTEM_PROMPT
+    if personal_context:
+        effective_prompt = f"{SYSTEM_PROMPT}\n\n## Personal Context\n\n{personal_context}"
+
     conn = sqlite3.connect(db)
     try:
         pending = conn.execute(
@@ -403,13 +425,20 @@ def run_classify(
 
         if verbose:
             typer.echo(f"[verbose] Classifying {len(pending)} pending rows...")
+            if personal_context:
+                typer.echo(f"[verbose] Personal context loaded from {context_file} ({len(personal_context)} chars)")
+            else:
+                typer.echo(f"[verbose] No personal context file found at {context_file}")
 
         context = build_context_payload(conn)
         processed = 0
 
         for row_id, thread_text, thread_type in pending:
             try:
-                result = classify_row(llm, row_id, thread_text, thread_type or "thought", context)
+                result = classify_row(
+                    llm, row_id, thread_text, thread_type or "thought", context,
+                    system_prompt=effective_prompt,
+                )
             except Exception as e:
                 typer.echo(f"  [error] Row {row_id}: {e}", err=True)
                 continue
@@ -519,6 +548,10 @@ def classify(
         bool,
         typer.Option("--debug", "-d", help="Show raw LLM prompts and responses."),
     ] = False,
+    context_file: Annotated[
+        str,
+        typer.Option("--context-file", "-c", help="Path to personal context .md file prepended to the classify prompt. Defaults to LOCAL_FIRST_THREAD_CONTEXT or ~/.local-first/thread-triage-context.md."),
+    ] = str(CONTEXT_FILE),
 ):
     """Phase 2 — classify pending rows with the LLM."""
     db_path = Path(db).expanduser()
@@ -533,7 +566,7 @@ def classify(
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
 
-    processed = run_classify(db_path, llm, dry_run, verbose)
+    processed = run_classify(db_path, llm, dry_run, verbose, context_file=Path(context_file).expanduser())
     typer.echo(f"\nDone. Processed: {processed}, Skipped: 0")
 
 
