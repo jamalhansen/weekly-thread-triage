@@ -25,7 +25,15 @@ cd weekly-thread-triage
 uv sync
 ```
 
-Requires `local-first.db` to exist (see `~/.local-first/`). Create the `thread_triage` table via the SQLite MCP server or manually:
+The tool auto-discovers its DB at `~/sync/thread-triage/thread-triage.db` if that directory exists (ideal for iCloud/Dropbox sync). Otherwise it falls back to `~/.local-first/local-first.db`. Override with `LOCAL_FIRST_DB`.
+
+To set up the sync location:
+
+```bash
+mkdir -p ~/sync/thread-triage
+```
+
+Create the `thread_triage` table via the SQLite MCP server or manually:
 
 ```sql
 CREATE TABLE IF NOT EXISTS thread_triage (
@@ -39,6 +47,8 @@ CREATE TABLE IF NOT EXISTS thread_triage (
     suggested_action TEXT,
     rationale TEXT,
     human_disposition TEXT,
+    resurface_after TEXT,
+    executed_at TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
@@ -122,7 +132,7 @@ uv run python thread_triage.py act --captures-dir "_captures" --tasks-file "_TAS
 | Variable | Description |
 |----------|-------------|
 | `OBSIDIAN_VAULT_PATH` | Path to vault root (auto-detected if unset) |
-| `LOCAL_FIRST_DB` | Path to `local-first.db` (default: `~/.local-first/local-first.db`) |
+| `LOCAL_FIRST_DB` | Explicit DB path override. Auto-discovered at `~/sync/thread-triage/thread-triage.db` if that directory exists, otherwise `~/.local-first/local-first.db` |
 | `MODEL_PROVIDER` | Default LLM provider (`ollama`, `anthropic`, `gemini`, `groq`, `deepseek`) |
 | `LOCAL_FIRST_THREAD_CONTEXT` | Path to personal context file (default: `~/.local-first/thread-triage-context.md`) |
 | `LOCAL_FIRST_SKIP_PATHS` | Colon-separated path fragments to exclude from scanning (e.g. `_marketing:_strategy`) |
@@ -135,7 +145,7 @@ uv run python thread_triage.py act --captures-dir "_captures" --tasks-file "_TAS
 |-------|---------|
 | `capture` | Distinct idea → turn into a tool spec, project note, or reference |
 | `task` | Concrete work with a clear next action → add to task list |
-| `defer` | Worth revisiting but not actionable this week |
+| `defer` | Worth revisiting but not actionable this week — resurfaces next scan |
 | `close` | Already done or no longer relevant |
 | `discard` | Noise — captured in the moment, no lasting value |
 

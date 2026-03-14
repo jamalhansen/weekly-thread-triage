@@ -1,6 +1,7 @@
 """Tests for weekly-thread-triage."""
 
 import json
+import os
 import sqlite3
 from datetime import date
 from pathlib import Path
@@ -15,6 +16,9 @@ from thread_triage import (
     app,
     Classification,
     ThreadRow,
+    _LEGACY_DB,
+    _SYNC_DB,
+    _resolve_db_path,
     append_task,
     create_capture_note,
     dates_for_days,
@@ -68,6 +72,29 @@ def make_db(tmp_path: Path) -> Path:
 
 
 # ── Unit tests ────────────────────────────────────────────────────────────────
+
+class TestResolveDbPath:
+    def test_env_var_takes_priority(self, tmp_path, monkeypatch):
+        explicit = tmp_path / "explicit.db"
+        monkeypatch.setenv("LOCAL_FIRST_DB", str(explicit))
+        assert _resolve_db_path() == explicit
+
+    def test_discovers_sync_db_when_dir_exists(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("LOCAL_FIRST_DB", raising=False)
+        sync_dir = tmp_path / "thread-triage"
+        sync_dir.mkdir()
+        fake_sync_db = sync_dir / "thread-triage.db"
+        with patch("thread_triage._SYNC_DB", fake_sync_db):
+            assert _resolve_db_path() == fake_sync_db
+
+    def test_falls_back_to_legacy_when_sync_absent(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("LOCAL_FIRST_DB", raising=False)
+        fake_sync_db = tmp_path / "nonexistent" / "thread-triage.db"
+        fake_legacy = tmp_path / "local-first.db"
+        with patch("thread_triage._SYNC_DB", fake_sync_db), \
+             patch("thread_triage._LEGACY_DB", fake_legacy):
+            assert _resolve_db_path() == fake_legacy
+
 
 class TestWeekLabel:
     def test_known_date(self):
@@ -345,6 +372,22 @@ class TestWriteRows:
         inserted = write_rows(db, r2)
         assert inserted == 1
 
+    def test_deferred_rows_resurface_next_week(self, tmp_path):
+        """Deferred rows are not blocked — they resurface each week until actioned differently."""
+        db = make_db(tmp_path)
+        conn = sqlite3.connect(db)
+        conn.execute(
+            """INSERT INTO thread_triage (week, source_file, thread_text, thread_type, human_disposition)
+               VALUES (?, ?, ?, ?, ?)""",
+            ("2026-W11", "a.md", "Worth revisiting this idea later", "thought", "defer"),
+        )
+        conn.commit()
+        conn.close()
+
+        r2 = [ThreadRow("2026-W12", "a.md", None, "Worth revisiting this idea later", "thought")]
+        inserted = write_rows(db, r2)
+        assert inserted == 1
+
 
 class TestSlugify:
     def test_basic_slug(self):
@@ -518,6 +561,24 @@ class TestRunAct:
         unstamped = conn.execute("SELECT COUNT(*) FROM thread_triage WHERE executed_at IS NULL").fetchone()[0]
         conn.close()
         assert unstamped == 1
+
+    def test_defer_sets_resurface_after(self, tmp_path):
+        """Deferred rows get resurface_after set so they can be tracked."""
+        db = make_db(tmp_path)
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        conn = sqlite3.connect(db)
+        self._insert_row(conn, "Worth revisiting later this month", "defer")
+        conn.commit()
+        conn.close()
+
+        acted, deferred, errors = run_act(db, vault, "_captures", "_TASKS.md", dry_run=False, verbose=False)
+        assert deferred == 1
+        assert acted == 0
+        conn = sqlite3.connect(db)
+        row = conn.execute("SELECT resurface_after FROM thread_triage").fetchone()
+        conn.close()
+        assert row[0] is not None  # resurface_after was stamped
 
 
 class TestLoadPersonalContext:

@@ -23,7 +23,30 @@ from local_first_common.cli import resolve_provider
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-DB_PATH = Path(os.environ.get("LOCAL_FIRST_DB", "~/.local-first/local-first.db")).expanduser()
+# DB path resolution — priority: env var → sync location → legacy default.
+# ~/sync/thread-triage/ is auto-discovered when the directory exists, making it
+# easy to place the DB in a cloud-synced folder (iCloud, Dropbox, etc.) without
+# any env var configuration.
+_SYNC_DB   = Path("~/sync/thread-triage/thread-triage.db").expanduser()
+_LEGACY_DB = Path("~/.local-first/local-first.db").expanduser()
+
+
+def _resolve_db_path() -> Path:
+    """Resolve the SQLite DB path.
+
+    Priority:
+    1. LOCAL_FIRST_DB env var — explicit override for any path
+    2. ~/sync/thread-triage/thread-triage.db — auto-discovered if directory exists
+    3. ~/.local-first/local-first.db — legacy default
+    """
+    if explicit := os.environ.get("LOCAL_FIRST_DB"):
+        return Path(explicit).expanduser()
+    if _SYNC_DB.parent.exists():
+        return _SYNC_DB
+    return _LEGACY_DB
+
+
+DB_PATH = _resolve_db_path()
 VAULT_PATH = Path(os.environ.get("OBSIDIAN_VAULT_PATH", "")).expanduser() or find_vault_root()
 
 # Sections whose content counts as a "thought" rather than a task
@@ -279,10 +302,13 @@ def write_rows(db: Path, rows: list[ThreadRow]) -> int:
             if existing:
                 continue
 
-            # Cross-week dedup: skip if already actioned in a prior week
+            # Cross-week dedup: skip if already actioned in a prior week.
+            # Deferred rows are excluded — they resurface each week until the
+            # user assigns a final disposition (capture/task/close/discard).
             prior_actioned = conn.execute(
                 """SELECT id FROM thread_triage
-                   WHERE thread_text = ? AND human_disposition IS NOT NULL AND week != ?""",
+                   WHERE thread_text = ? AND human_disposition IS NOT NULL
+                     AND human_disposition != 'defer' AND week != ?""",
                 (row.thread_text, row.week),
             ).fetchone()
             if prior_actioned:
@@ -597,8 +623,13 @@ def run_act(
 
                 elif disp == "defer":
                     deferred += 1
+                    if not dry_run:
+                        conn.execute(
+                            "UPDATE thread_triage SET resurface_after = date('now', '+7 days') WHERE id = ?",
+                            (row_id,),
+                        )
                     if verbose:
-                        typer.echo(f"  [defer] skipped — no resurface mechanism yet")
+                        typer.echo(f"  [defer] resurface after 7 days: {thread_text[:60]}…")
                     continue  # leave executed_at NULL
 
                 else:
