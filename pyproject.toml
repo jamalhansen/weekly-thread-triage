@@ -1,0 +1,22 @@
+[project]
+name = "weekly-thread-triage"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "local-first-common",
+    "requests>=2.32.5",
+    "typer>=0.24.1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[tool.uv.sources]
+local-first-common = { git = "https://github.com/jamalhansen/local-first-common.git", rev = "main" }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]

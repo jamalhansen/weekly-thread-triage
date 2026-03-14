@@ -1,0 +1,20 @@
+# Local dev and private files
+.env
+.envrc
+CLAUDE.md
+uv.toml
+.venv
+
+# macOS
+.DS_Store
+
+# JetBrains IDE
+.idea/
+
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
