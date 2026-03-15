@@ -10,13 +10,13 @@ Two headless phases write to SQLite; Phase 3 review happens in a Claude chat ses
 Searches all vault files for date strings from the target week. Extracts unchecked tasks (`- [ ]`) and meaningful bullet points from thought sections (morning pages, reflections, voice journal). Writes new rows to the `thread_triage` table in `local-first.db`.
 
 **Phase 2 — classify** (`thread_triage classify`):
-Sends each unclassified row to an LLM with a prompt asking for a disposition (`capture | task | defer | close | discard`), a concrete suggested action, and a one-sentence rationale. Updates rows in place. Classification quality improves significantly when a personal context file is provided (see [Personal context file](#personal-context-file)).
+Sends each unclassified row to an LLM with a prompt asking for a disposition (`capture | task | defer | close | discard`), a concrete suggested action, and a one-sentence rationale. Updates rows in place. At classify time, the tool automatically loads your yearly and monthly goal files from the vault (`Goals/{year}/{year} Goals.md` and `Goals/{year}/_monthly/{year}-{month}.md`) and prepends them to the prompt so the LLM can align dispositions with your active goals. A personal context file can further improve quality (see [Personal context file](#personal-context-file)).
 
 **Phase 3 — review** (Claude chat):
 Open a chat session with the SQLite MCP server attached. Review rows and set `human_disposition` on each one (`capture | task | defer | close | discard`).
 
 **Phase 4 — act** (`thread_triage act`):
-Loops over all rows where `human_disposition IS NOT NULL AND executed_at IS NULL`. Creates an Obsidian note in `_captures/` for captures, appends a `- [ ]` task line for tasks, and stamps `executed_at` when done. Defers are left untouched until a resurface mechanism is built.
+Loops over all rows where `human_disposition IS NOT NULL AND executed_at IS NULL`. Creates an Obsidian note in `_captures/` for captures, appends a `- [ ]` task line to today's daily note `## Actions` section for tasks, and stamps `executed_at` when done. Defers are left untouched until a resurface mechanism is built.
 
 ## Installation
 
@@ -99,8 +99,8 @@ uv run python thread_triage.py act
 # Preview what act would do without writing anything
 uv run python thread_triage.py act --dry-run --verbose
 
-# Override where capture notes and tasks land
-uv run python thread_triage.py act --captures-dir "_captures" --tasks-file "_TASKS.md"
+# Override where capture notes land
+uv run python thread_triage.py act --captures-dir "_captures"
 ```
 
 ## CLI reference
@@ -150,7 +150,6 @@ uv run python thread_triage.py act --captures-dir "_captures" --tasks-file "_TAS
 |------|-------|---------|-------------|
 | `--db` | | `LOCAL_FIRST_DB` or `~/.local-first/local-first.db` | Path to SQLite DB |
 | `--captures-dir` | `-C` | `LOCAL_FIRST_CAPTURES_DIR` or `_captures` | Vault-relative folder for capture notes |
-| `--tasks-file` | `-t` | `LOCAL_FIRST_TASKS_FILE` or `_captures/_CAPTURED_TASKS.md` | Vault-relative tasks file to append to |
 | `--dry-run` | `-n` | false | Show what would be created without writing |
 | `--verbose` | `-v` | false | Show close/discard rows too |
 
@@ -164,7 +163,6 @@ uv run python thread_triage.py act --captures-dir "_captures" --tasks-file "_TAS
 | `LOCAL_FIRST_THREAD_CONTEXT` | Path to personal context file (default: `~/.local-first/thread-triage-context.md`) |
 | `LOCAL_FIRST_SKIP_PATHS` | Colon-separated path fragments to exclude from scanning (e.g. `_marketing:_strategy`) |
 | `LOCAL_FIRST_CAPTURES_DIR` | Vault-relative folder for capture notes (default: `_captures`) |
-| `LOCAL_FIRST_TASKS_FILE` | Vault-relative tasks file for `act` to append to (default: `_captures/_CAPTURED_TASKS.md`) |
 
 ## Dispositions
 
@@ -175,6 +173,17 @@ uv run python thread_triage.py act --captures-dir "_captures" --tasks-file "_TAS
 | `defer` | Worth revisiting but not actionable this week — resurfaces next scan |
 | `close` | Already done or no longer relevant |
 | `discard` | Noise — captured in the moment, no lasting value |
+
+## Goal context (automatic)
+
+At classify time the tool automatically reads two goal files from the vault and prepends their content to the LLM prompt:
+
+- `Goals/{year}/{year} Goals.md` — yearly goals
+- `Goals/{year}/_monthly/{year}-{month}.md` — monthly focus
+
+Obsidian frontmatter and wikilinks are stripped before sending. If neither file exists the classify prompt is unchanged. No configuration is needed — the files are discovered at runtime from `OBSIDIAN_VAULT_PATH`.
+
+This allows the LLM to make goal-aligned suggestions: e.g. defer threads that conflict with this month's focus, or prefer `capture` for threads that extend an active project.
 
 ## Personal context file
 
@@ -222,6 +231,13 @@ export LOCAL_FIRST_THREAD_CONTEXT="~/vaults/my-vault/triage-context.md"
 # or per-run:
 uv run python thread_triage.py classify --context-file ~/my-context.md
 ```
+
+## Scanner behaviour
+
+- **Frontmatter excluded from date matching** — files are matched by date strings in the note body only. A spec file with `Created: 2026-03-12` in YAML frontmatter is not included just because it was created this week.
+- **`_captures` never rescanned** — Phase 1 skips the `_captures` directory so triage output notes don't feed back into next week's scan.
+- **Recurring tasks filtered** — bullets containing `🔁` or `🔄` are skipped; they're already tracked by the Obsidian Tasks plugin.
+- **Thought sections only** — unchecked tasks (`- [ ]`) are only extracted from thought sections (Morning Pages, Thoughts, Voice Journal, Reflections). Tasks in structured sections like `## Actions` are managed by the Tasks plugin and are left alone.
 
 ## Project structure
 

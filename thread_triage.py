@@ -69,9 +69,7 @@ SKIP_PATHS: set[str] = {
 }
 
 # Phase 4 — Act: where output lands in the vault
-# Both are vault-relative paths; override via env vars.
 CAPTURES_DIR = os.environ.get("LOCAL_FIRST_CAPTURES_DIR", "_captures")
-TASKS_FILE   = os.environ.get("LOCAL_FIRST_TASKS_FILE",   "_captures/_CAPTURED_TASKS.md")
 
 # Optional personal context file — prepended to the classify system prompt at runtime.
 # Lives outside the repo so private details (tool names, workflows) never hit git.
@@ -86,6 +84,51 @@ def load_personal_context(path: Path) -> str:
     if path.exists():
         return path.read_text(encoding="utf-8").strip()
     return ""
+
+
+def _strip_wikilinks(text: str) -> str:
+    """Replace [[Link|Alias]] with Alias, and [[Link]] with Link."""
+    text = re.sub(r"\[\[([^|\]]+)\|([^\]]+)\]\]", r"\2", text)
+    text = re.sub(r"\[\[([^\]]+)\]\]", r"\1", text)
+    return text
+
+
+def load_goal_context(vault: Path, target_date: date) -> str:
+    """Load yearly and monthly goal context from the vault.
+
+    Reads Goals/{year}/{year} Goals.md and Goals/{year}/_monthly/{year}-{month:02d}.md.
+    Strips Obsidian frontmatter and wikilinks. Returns '' if neither file exists.
+    This context is prepended to the classify prompt so the LLM can align thread
+    dispositions with active goals (e.g. defer low-priority threads, capture high-signal ones).
+    """
+    year = target_date.year
+    month = target_date.month
+    sections: list[str] = []
+
+    def _load(path: Path) -> str:
+        content = path.read_text(encoding="utf-8", errors="ignore")
+        # Strip frontmatter
+        if content.startswith("---"):
+            end = content.find("\n---", 3)
+            if end != -1:
+                content = content[end + 4:]
+        return _strip_wikilinks(content).strip()
+
+    yearly = vault / "Goals" / str(year) / f"{year} Goals.md"
+    if yearly.exists():
+        try:
+            sections.append(f"### {year} Yearly Goals\n\n{_load(yearly)}")
+        except Exception:
+            pass
+
+    monthly = vault / "Goals" / str(year) / "_monthly" / f"{year}-{month:02d}.md"
+    if monthly.exists():
+        try:
+            sections.append(f"### {year}-{month:02d} Monthly Focus\n\n{_load(monthly)}")
+        except Exception:
+            pass
+
+    return "\n\n".join(sections)
 
 
 # First words that indicate a line is code/SQL, not a natural-language thought
@@ -453,6 +496,10 @@ def run_classify(
     if personal_context:
         effective_prompt = f"{SYSTEM_PROMPT}\n\n## Personal Context\n\n{personal_context}"
 
+    goal_context = load_goal_context(VAULT_PATH, date.today())
+    if goal_context:
+        effective_prompt = effective_prompt + "\n\n## Goal Context\n\n" + goal_context
+
     conn = sqlite3.connect(db)
     try:
         pending = conn.execute(
@@ -471,6 +518,8 @@ def run_classify(
                 typer.echo(f"[verbose] Personal context loaded from {context_file} ({len(personal_context)} chars)")
             else:
                 typer.echo(f"[verbose] No personal context file found at {context_file}")
+            if goal_context:
+                typer.echo(f"[verbose] Goal context loaded ({len(goal_context)} chars)")
 
         context = build_context_payload(conn)
         processed = 0
@@ -561,26 +610,42 @@ def append_task(
     suggested_action: str,
     source_file: str,
     vault: Path,
-    tasks_file: str,
     dry_run: bool,
 ) -> Path:
-    """Append a task line to the tasks file. Returns the target path."""
-    tasks_path = vault / tasks_file
-    task_line = f"\n- [ ] {suggested_action} ([[{source_file}]])\n"
+    """Append a task line to today's daily note Actions section.
+
+    Creates the note and/or Actions section if they don't exist.
+    Returns the daily note path.
+    """
+    today = date.today()
+    note_path = vault / "Timeline" / f"{today.isoformat()}.md"
+    task_line = f"- [ ] {suggested_action} ([[{source_file}]])"
 
     if not dry_run:
-        tasks_path.parent.mkdir(parents=True, exist_ok=True)
-        with tasks_path.open("a", encoding="utf-8") as f:
-            f.write(task_line)
+        note_path.parent.mkdir(parents=True, exist_ok=True)
+        content = note_path.read_text(encoding="utf-8") if note_path.exists() else f"# {today.isoformat()}\n\n## Actions\n\n"
 
-    return tasks_path
+        actions_heading = "\n## Actions\n"
+        if actions_heading in content:
+            before, _, after = content.partition(actions_heading)
+            # Append to end of Actions section (before the next ## heading, or EOF)
+            if "\n## " in after:
+                idx = after.index("\n## ")
+                new_content = before + actions_heading + after[:idx].rstrip() + f"\n{task_line}\n" + after[idx:]
+            else:
+                new_content = content.rstrip() + f"\n{task_line}\n"
+        else:
+            new_content = content.rstrip() + f"\n\n## Actions\n\n{task_line}\n"
+
+        note_path.write_text(new_content, encoding="utf-8")
+
+    return note_path
 
 
 def run_act(
     db: Path,
     vault: Path,
     captures_dir: str,
-    tasks_file: str,
     dry_run: bool,
     verbose: bool,
 ) -> tuple[int, int, int]:
@@ -624,9 +689,9 @@ def run_act(
                 elif disp == "task":
                     path = append_task(
                         suggested_action or thread_text, source_file,
-                        vault, tasks_file, dry_run,
+                        vault, dry_run,
                     )
-                    typer.echo(f"  [task] → {tasks_file}")
+                    typer.echo(f"  [task] → {path.name}")
 
                 elif disp in ("close", "discard"):
                     if verbose:
@@ -896,10 +961,6 @@ def act(
         str,
         typer.Option("--captures-dir", "-C", help="Vault-relative folder for capture notes. Defaults to LOCAL_FIRST_CAPTURES_DIR or '_captures'."),
     ] = CAPTURES_DIR,
-    tasks_file: Annotated[
-        str,
-        typer.Option("--tasks-file", "-t", help="Vault-relative path of the tasks file to append to. Defaults to LOCAL_FIRST_TASKS_FILE or '_captures/_CAPTURED_TASKS.md'."),
-    ] = TASKS_FILE,
     dry_run: Annotated[
         bool,
         typer.Option("--dry-run", "-n", help="Show what would be created/written without touching files or the DB."),
@@ -909,7 +970,7 @@ def act(
         typer.Option("--verbose", "-v", help="Show per-row detail including close/discard."),
     ] = False,
 ):
-    """Phase 4 — act on reviewed rows: create capture notes, append tasks, stamp executed_at."""
+    """Phase 4 — act on reviewed rows: create capture notes, append tasks to today's daily note, stamp executed_at."""
     db_path = Path(db).expanduser()
 
     if not db_path.exists():
@@ -920,7 +981,7 @@ def act(
         typer.echo(f"Error: Vault not found at {VAULT_PATH}. Set OBSIDIAN_VAULT_PATH.", err=True)
         raise typer.Exit(1)
 
-    acted, deferred, errors = run_act(db_path, VAULT_PATH, captures_dir, tasks_file, dry_run, verbose)
+    acted, deferred, errors = run_act(db_path, VAULT_PATH, captures_dir, dry_run, verbose)
 
     suffix = " (dry-run)" if dry_run else ""
     typer.echo(f"\nDone{suffix}. Acted: {acted}, Deferred (skipped): {deferred}, Errors: {errors}")
