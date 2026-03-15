@@ -226,6 +226,33 @@ class TestExtractThreads:
         assert len(tasks) == 1
         assert "SQLite" in tasks[0].thread_text
 
+    def test_skips_recurring_tasks_rotate_emoji(self, tmp_path):
+        """Tasks containing the 🔄 emoji variant are also skipped."""
+        vault = tmp_path
+        note = vault / "note.md"
+        note.write_text(
+            "## Morning Pages\n\n"
+            "- [ ] Check email 🔄 every morning\n"
+            "- [ ] Write the SQLite MCP spec doc\n"
+        )
+        threads = extract_threads(note, vault)
+        tasks = [t for t in threads if t.thread_type == "task"]
+        assert len(tasks) == 1
+        assert "SQLite" in tasks[0].thread_text
+
+    def test_skips_recurring_thoughts_rotate_emoji(self, tmp_path):
+        """Thought bullets containing 🔄 are also skipped."""
+        vault = tmp_path
+        note = vault / "note.md"
+        note.write_text(
+            "## Thoughts\n\n"
+            "- Remember to do the weekly review 🔄 every Sunday night\n"
+            "- I keep thinking about the weekly review format and how it could be improved\n"
+        )
+        threads = extract_threads(note, vault)
+        assert len(threads) == 1
+        assert "weekly review format" in threads[0].thread_text
+
     def test_skips_task_fragments(self, tmp_path):
         """Tasks with fewer than 4 meaningful words after stripping metadata are skipped."""
         vault = tmp_path
@@ -292,6 +319,47 @@ class TestFindFilesContainingDates:
             result = find_files_containing_dates(vault, dates)
         assert marketing not in result
         assert timeline in result
+
+    def test_skips_captures_dir(self, tmp_path):
+        """Files in _captures are never scanned (triage output must not be re-scanned)."""
+        vault = tmp_path
+        capture = vault / "_captures" / "2026-03-12 some-capture.md"
+        capture.parent.mkdir()
+        capture.write_text("Some capture note referencing 2026-03-12.")
+
+        dates = [date(2026, 3, 12)]
+        result = find_files_containing_dates(vault, dates)
+        assert capture not in result
+
+    def test_does_not_match_date_only_in_frontmatter(self, tmp_path):
+        """A file whose only date reference is in YAML frontmatter should not be matched.
+
+        This prevents spec files (Created: 2026-03-12) from being scanned
+        just because they were created this week.
+        """
+        vault = tmp_path
+        spec = vault / "_series" / "tool-spec.md"
+        spec.parent.mkdir()
+        spec.write_text(
+            "---\nCreated: 2026-03-12\nStatus: active\n---\n\n"
+            "This spec was created this week but has no weekly date references in the body."
+        )
+        dates = [date(2026, 3, 12)]
+        result = find_files_containing_dates(vault, dates)
+        assert spec not in result
+
+    def test_matches_date_in_body_despite_frontmatter(self, tmp_path):
+        """A file with the date in BOTH frontmatter and body IS matched (body takes precedence)."""
+        vault = tmp_path
+        note = vault / "Timeline" / "2026-03-12.md"
+        note.parent.mkdir()
+        note.write_text(
+            "---\nCreated: 2026-03-12\n---\n\n"
+            "Today is 2026-03-12 and I worked on the project."
+        )
+        dates = [date(2026, 3, 12)]
+        result = find_files_containing_dates(vault, dates)
+        assert note in result
 
 
 class TestDeduplicate:

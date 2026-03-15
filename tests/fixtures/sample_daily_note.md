@@ -2,6 +2,8 @@
 Created: 2026-03-12
 ---
 
+# 2026-03-12
+
 ## Morning Pages
 
 - I keep thinking about building a read-later queue for the content discovery agent

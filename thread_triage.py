@@ -55,8 +55,10 @@ THOUGHT_SECTIONS = {"morning pages", "thoughts", "voice journal", "reflections"}
 # File extensions to scan
 SCAN_EXTENSIONS = {".md"}
 
-# Files/dirs to skip even if they contain date strings
-SKIP_DIRS = {".obsidian", ".trash", "Templates"}
+# Files/dirs to skip even if they contain date strings.
+# _captures is included to prevent triage's own output notes from being re-scanned
+# on subsequent runs.
+SKIP_DIRS = {".obsidian", ".trash", "Templates", "_captures"}
 
 # Path fragments to skip (colon-separated in LOCAL_FIRST_SKIP_PATHS env var)
 # e.g. LOCAL_FIRST_SKIP_PATHS="_marketing:_strategy:Local-First AI - Prep Timeline"
@@ -183,7 +185,16 @@ def find_files_containing_dates(vault: Path, dates: list[date]) -> dict[Path, se
         except Exception:
             continue
 
-        found = {ds for ds in date_strings if ds in content}
+        # Strip frontmatter before date matching so that files whose only date
+        # reference is in their YAML metadata (Created, Updated, week, etc.) are
+        # not scanned. We want dates that appear in the body of the note.
+        body = content
+        if content.startswith("---"):
+            end_idx = content.find("\n---", 3)
+            if end_idx != -1:
+                body = content[end_idx + 4:]
+
+        found = {ds for ds in date_strings if ds in body}
         if found:
             matches[path] = found
 
@@ -233,7 +244,7 @@ def extract_threads(path: Path, vault: Path) -> list[ThreadRow]:
         if task_match:
             if in_thought_section:
                 text = task_match.group(1).strip()
-                if "🔁" in text:
+                if "🔁" in text or "🔄" in text:
                     continue  # recurring — already tracked
                 if _meaningful_word_count(text) < 4:
                     continue  # fragment with no real content (fewer than 4 meaningful words)
@@ -255,7 +266,7 @@ def extract_threads(path: Path, vault: Path) -> list[ThreadRow]:
                 first_word = text.split()[0].lower().rstrip(";,(\\*") if text else ""
                 if first_word in _SQL_KEYWORDS:
                     continue
-                if "🔁" in text:
+                if "🔁" in text or "🔄" in text:
                     continue  # recurring reminder, not a thread
                 if text and len(text.split()) >= 4:
                     threads.append(ThreadRow(
