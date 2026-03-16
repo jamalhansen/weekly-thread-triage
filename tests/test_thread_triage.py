@@ -1,25 +1,19 @@
 """Tests for weekly-thread-triage."""
 
 import json
-import os
 import sqlite3
 from datetime import date
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 from typer.testing import CliRunner
 
 from local_first_common.testing import MockProvider
 
 from thread_triage import (
     app,
-    Classification,
     ThreadRow,
-    _LEGACY_DB,
-    _SYNC_DB,
     _resolve_db_path,
-    _strip_wikilinks,
     append_task,
     create_capture_note,
     dates_for_days,
@@ -30,14 +24,9 @@ from thread_triage import (
     load_goal_context,
     load_personal_context,
     run_act,
-    run_classify,
-    run_scan,
     slugify,
     week_label,
     write_rows,
-    CAPTURES_DIR,
-    CONTEXT_FILE,
-    SKIP_PATHS,
 )
 
 # ── Helpers (continued) ───────────────────────────────────────────────────────

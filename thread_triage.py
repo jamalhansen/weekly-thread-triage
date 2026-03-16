@@ -17,9 +17,11 @@ from typing import Annotated, Optional
 import typer
 from pydantic import BaseModel
 
+from local_first_common.llm import parse_json_response
 from local_first_common.obsidian import find_vault_root, get_week_dates
 from local_first_common.providers import PROVIDERS
 from local_first_common.cli import resolve_provider
+from local_first_common.text import strip_wikilinks
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -86,12 +88,6 @@ def load_personal_context(path: Path) -> str:
     return ""
 
 
-def _strip_wikilinks(text: str) -> str:
-    """Replace [[Link|Alias]] with Alias, and [[Link]] with Link."""
-    text = re.sub(r"\[\[([^|\]]+)\|([^\]]+)\]\]", r"\2", text)
-    text = re.sub(r"\[\[([^\]]+)\]\]", r"\1", text)
-    return text
-
 
 def load_goal_context(vault: Path, target_date: date) -> str:
     """Load yearly and monthly goal context from the vault.
@@ -112,7 +108,7 @@ def load_goal_context(vault: Path, target_date: date) -> str:
             end = content.find("\n---", 3)
             if end != -1:
                 content = content[end + 4:]
-        return _strip_wikilinks(content).strip()
+        return strip_wikilinks(content).strip()
 
     yearly = vault / "Goals" / str(year) / f"{year} Goals.md"
     if yearly.exists():
@@ -462,7 +458,6 @@ def classify_row(
     system_prompt: str = SYSTEM_PROMPT,
 ) -> Classification:
     """Call LLM to classify a single thread row."""
-    import json
 
     user = f"""Thread type: {thread_type}
 Thread text: {thread_text}
@@ -477,9 +472,7 @@ Respond with JSON only:
 }}"""
 
     raw = llm.complete(system_prompt, user)
-    raw = re.sub(r"^```(?:json)?\n?", "", raw.strip())
-    raw = re.sub(r"\n?```$", "", raw.strip())
-    data = json.loads(raw)
+    data = parse_json_response(raw)
     return Classification(**data)
 
 
@@ -783,7 +776,7 @@ def scan(
 
     run_scan(dates, label, VAULT_PATH, db_path, dry_run, verbose)
     if not dry_run:
-        typer.echo(f"\nDone. Processed: 1, Skipped: 0")
+        typer.echo("\nDone. Processed: 1, Skipped: 0")
 
 
 @app.command()
