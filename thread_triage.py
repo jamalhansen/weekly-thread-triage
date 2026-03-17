@@ -52,7 +52,7 @@ DB_PATH = _resolve_db_path()
 VAULT_PATH = Path(os.environ.get("OBSIDIAN_VAULT_PATH", "")).expanduser() or find_vault_root()
 
 # Sections whose content counts as a "thought" rather than a task
-THOUGHT_SECTIONS = {"morning pages", "thoughts", "voice journal", "reflections"}
+THOUGHT_SECTIONS = {"morning pages", "thoughts", "voice journal", "reflections", "early morning"}
 
 # File extensions to scan
 SCAN_EXTENSIONS = {".md"}
@@ -273,13 +273,23 @@ def extract_threads(path: Path, vault: Path) -> list[ThreadRow]:
         section_lower = section.lower() if section else ""
         in_thought_section = any(s in section_lower for s in THOUGHT_SECTIONS)
 
+        # Unwrap Obsidian callout block content in thought sections so that
+        # bullet lines inside Morning Pages callouts are matched normally.
+        # Callout format: first line is "> [!type]- title", continuation lines
+        # are "> content". We drop the opener and strip "> " from the rest.
+        effective_line = line
+        if in_thought_section and re.match(r"^>", line):
+            if re.match(r"^>\s*\[!", line):
+                continue  # drop callout opener line (e.g. "> [!pencil]- ...")
+            effective_line = re.sub(r"^>\s?", "", line)
+
         # Skip completed [x] and cancelled [-] task markers everywhere
-        if re.match(r"^\s*[-*]\s+\[[-xX]\]", line):
+        if re.match(r"^\s*[-*]\s+\[[-xX]\]", effective_line):
             continue
 
         # Unchecked tasks — only from thought sections (other sections are managed by
         # the Obsidian Tasks plugin and don't need surfacing here)
-        task_match = re.match(r"^\s*-\s+\[ \]\s+(.+)", line)
+        task_match = re.match(r"^\s*-\s+\[ \]\s+(.+)", effective_line)
         if task_match:
             if in_thought_section:
                 text = task_match.group(1).strip()
@@ -297,9 +307,11 @@ def extract_threads(path: Path, vault: Path) -> list[ThreadRow]:
                     ))
             continue  # always skip thought check for task-marker lines
 
-        # Thoughts — non-empty bullet lines in thought sections
+        # Thoughts — non-empty bullet lines in thought sections.
+        # Supports standard (-/*), Unicode bullet (∙ U+2219), and common
+        # alternatives (•, ·) used in Early Morning Chat Threads exports.
         if in_thought_section:
-            thought_match = re.match(r"^\s*[-*]\s+(.+)", line)
+            thought_match = re.match(r"^\s*[-*∙•·]\s+(.+)", effective_line)
             if thought_match:
                 text = thought_match.group(1).strip()
                 first_word = text.split()[0].lower().rstrip(";,(\\*") if text else ""

@@ -267,6 +267,115 @@ class TestExtractThreads:
         assert len(threads) == 1
         assert threads[0].source_section == "Morning Pages"
 
+    # ── Fix B: Unicode bullet characters ──────────────────────────────────────
+
+    def test_extracts_unicode_bullet_dot(self, tmp_path):
+        """∙ (U+2219) bullets in thought sections are extracted as thoughts."""
+        vault = tmp_path
+        note = vault / "note.md"
+        note.write_text(
+            "## Early Morning Chat Threads\n\n"
+            "∙\tPersona-as-evaluator concept — assign personas to core life principles and evaluate monthly goals\n"
+            "∙\t10-year positioning — become the person for one specific thing\n"
+        )
+        threads = extract_threads(note, vault)
+        thoughts = [t for t in threads if t.thread_type == "thought"]
+        assert len(thoughts) == 2
+        assert any("Persona-as-evaluator" in t.thread_text for t in thoughts)
+        assert any("10-year positioning" in t.thread_text for t in thoughts)
+
+    def test_extracts_bullet_dot_variants(self, tmp_path):
+        """• and · bullet variants are also extracted."""
+        vault = tmp_path
+        note = vault / "note.md"
+        note.write_text(
+            "## Thoughts\n\n"
+            "• Using an MCP server as a unified backend could enable agentic orchestration\n"
+            "· The local tools need a shared coordination layer to compose properly\n"
+        )
+        threads = extract_threads(note, vault)
+        thoughts = [t for t in threads if t.thread_type == "thought"]
+        assert len(thoughts) == 2
+
+    def test_unicode_bullet_skips_short(self, tmp_path):
+        """∙ bullets with fewer than 4 words are skipped."""
+        vault = tmp_path
+        note = vault / "note.md"
+        note.write_text("## Thoughts\n\n∙\tYes\n∙\tFive meaningful words in this one\n")
+        threads = extract_threads(note, vault)
+        assert len(threads) == 1
+
+    # ── Fix A: Obsidian callout block content ──────────────────────────────────
+
+    def test_extracts_bullets_inside_morning_pages_callout(self, tmp_path):
+        """Bullet lines inside a Morning Pages callout block are extracted."""
+        vault = tmp_path
+        note = vault / "note.md"
+        note.write_text(
+            "## ✍️ Morning Pages\n\n"
+            "> [!pencil]- Click to expand\n"
+            ">\n"
+            "> - Using an MCP server as a unified backend enables agentic orchestration\n"
+            "> - The local tools need a shared coordination layer to compose them\n"
+        )
+        threads = extract_threads(note, vault)
+        thoughts = [t for t in threads if t.thread_type == "thought"]
+        assert len(thoughts) == 2
+        assert any("MCP server" in t.thread_text for t in thoughts)
+
+    def test_callout_opener_line_not_extracted(self, tmp_path):
+        """The "> [!pencil]-" callout opener line itself is not extracted as a thread."""
+        vault = tmp_path
+        note = vault / "note.md"
+        note.write_text(
+            "## Morning Pages\n\n"
+            "> [!pencil]- Click to expand stream-of-consciousness writing\n"
+            "> - One genuine insight about the MCP architecture pattern here\n"
+        )
+        threads = extract_threads(note, vault)
+        assert all("expand" not in t.thread_text for t in threads)
+        assert all("pencil" not in t.thread_text for t in threads)
+
+    def test_callout_bullets_skipped_outside_thought_section(self, tmp_path):
+        """Callout content in non-thought sections is not extracted."""
+        vault = tmp_path
+        note = vault / "note.md"
+        note.write_text(
+            "## Resources\n\n"
+            "> [!note]- Reference\n"
+            "> - Some technical detail that is not a thought\n"
+        )
+        threads = extract_threads(note, vault)
+        assert len(threads) == 0
+
+    def test_callout_unchecked_task_extracted(self, tmp_path):
+        """An unchecked task inside a Morning Pages callout is extracted as a task."""
+        vault = tmp_path
+        note = vault / "note.md"
+        note.write_text(
+            "## Morning Pages\n\n"
+            "> [!pencil]- Expand\n"
+            "> - [ ] Write the SQLite MCP spec document this week\n"
+        )
+        threads = extract_threads(note, vault)
+        tasks = [t for t in threads if t.thread_type == "task"]
+        assert len(tasks) == 1
+        assert "SQLite MCP spec" in tasks[0].thread_text
+
+    def test_callout_unicode_bullet_extracted(self, tmp_path):
+        """∙ bullets inside a callout in a thought section are extracted."""
+        vault = tmp_path
+        note = vault / "note.md"
+        note.write_text(
+            "## Morning Pages\n\n"
+            "> [!pencil]- Expand\n"
+            "> ∙\tPersona-as-evaluator concept for monthly goal review sessions\n"
+        )
+        threads = extract_threads(note, vault)
+        thoughts = [t for t in threads if t.thread_type == "thought"]
+        assert len(thoughts) == 1
+        assert "Persona-as-evaluator" in thoughts[0].thread_text
+
 
 class TestFindFilesContainingDates:
     def test_finds_files_with_date_string(self, tmp_path):
