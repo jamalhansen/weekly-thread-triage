@@ -15,7 +15,7 @@ dependencies = [
 pythonpath = ["."]
 
 [tool.uv.sources]
-local-first-common = { git = "https://github.com/jamalhansen/local-first-common.git", rev = "main" }
+local-first-common = { git = "https://github.com/jamalhansen/local-first-common.git", branch = "main" }
 
 [dependency-groups]
 dev = [

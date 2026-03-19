@@ -10,7 +10,7 @@ from typer.testing import CliRunner
 
 from local_first_common.testing import MockProvider
 
-from thread_triage import (
+from logic import (
     app,
     ThreadRow,
     _resolve_db_path,
@@ -85,15 +85,15 @@ class TestResolveDbPath:
         sync_dir = tmp_path / "thread-triage"
         sync_dir.mkdir()
         fake_sync_db = sync_dir / "thread-triage.db"
-        with patch("thread_triage._SYNC_DB", fake_sync_db):
+        with patch("logic._SYNC_DB", fake_sync_db):
             assert _resolve_db_path() == fake_sync_db
 
     def test_falls_back_to_legacy_when_sync_absent(self, tmp_path, monkeypatch):
         monkeypatch.delenv("LOCAL_FIRST_DB", raising=False)
         fake_sync_db = tmp_path / "nonexistent" / "thread-triage.db"
         fake_legacy = tmp_path / "local-first.db"
-        with patch("thread_triage._SYNC_DB", fake_sync_db), \
-             patch("thread_triage._LEGACY_DB", fake_legacy):
+        with patch("logic._SYNC_DB", fake_sync_db), \
+             patch("logic._LEGACY_DB", fake_legacy):
             assert _resolve_db_path() == fake_legacy
 
 
@@ -414,7 +414,7 @@ class TestFindFilesContainingDates:
         timeline.write_text("2026-03-12")
 
         dates = [date(2026, 3, 12)]
-        with patch("thread_triage.SKIP_PATHS", {"_marketing"}):
+        with patch("logic.SKIP_PATHS", {"_marketing"}):
             result = find_files_containing_dates(vault, dates)
         assert marketing not in result
         assert timeline in result
@@ -862,7 +862,7 @@ class TestActCommand:
         conn.commit()
         conn.close()
 
-        with patch("thread_triage.VAULT_PATH", vault):
+        with patch("logic.VAULT_PATH", vault):
             result = runner.invoke(app, [
                 "act", "--db", str(db),
                 "--captures-dir", "_captures",
@@ -888,7 +888,7 @@ class TestActCommand:
         conn.commit()
         conn.close()
 
-        with patch("thread_triage.VAULT_PATH", vault):
+        with patch("logic.VAULT_PATH", vault):
             result = runner.invoke(app, ["act", "--db", str(db), "--dry-run"])
 
         assert result.exit_code == 0, result.output
@@ -905,7 +905,7 @@ class TestScanCommand:
         note.write_text(FIXTURE_NOTE.read_text())
         db = make_db(tmp_path)
 
-        with patch("thread_triage.VAULT_PATH", vault):
+        with patch("logic.VAULT_PATH", vault):
             result = runner.invoke(app, [
                 "scan", "--week", "2026-W11",
                 "--db", str(db),
@@ -923,7 +923,7 @@ class TestScanCommand:
         note.write_text(FIXTURE_NOTE.read_text())
         db = make_db(tmp_path)
 
-        with patch("thread_triage.VAULT_PATH", vault):
+        with patch("logic.VAULT_PATH", vault):
             result = runner.invoke(app, [
                 "scan", "--week", "2026-W11",
                 "--db", str(db),
@@ -959,7 +959,7 @@ class TestClassifyCommand:
             "rationale": "Concrete bug with a clear owner and scope.",
         })
 
-        with patch("thread_triage.resolve_provider", return_value=MockProvider(mock_response)):
+        with patch("logic.resolve_provider", return_value=MockProvider(mock_response)):
             result = runner.invoke(app, ["classify", "--db", str(db)])
 
         assert result.exit_code == 0, result.output
@@ -984,7 +984,7 @@ class TestClassifyCommand:
             "rationale": "Distinct idea that fits the series roadmap.",
         })
 
-        with patch("thread_triage.resolve_provider", return_value=MockProvider(mock_response)):
+        with patch("logic.resolve_provider", return_value=MockProvider(mock_response)):
             result = runner.invoke(app, ["classify", "--db", str(db), "--dry-run"])
 
         assert result.exit_code == 0
@@ -1018,7 +1018,7 @@ class TestClassifyCommand:
                     "rationale": "Good idea.",
                 })
 
-        with patch("thread_triage.resolve_provider", return_value=CapturingProvider()):
+        with patch("logic.resolve_provider", return_value=CapturingProvider()):
             result = runner.invoke(app, [
                 "classify", "--db", str(db),
                 "--context-file", str(ctx_file),
