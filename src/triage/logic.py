@@ -18,6 +18,8 @@ from local_first_common.obsidian import get_week_dates
 from local_first_common.providers import PROVIDERS
 from local_first_common.cli import (
     resolve_provider,
+    dry_run_option,
+    no_llm_option,
 )
 from local_first_common.text import strip_wikilinks
 
@@ -87,7 +89,7 @@ def scan(
     days: Optional[int] = typer.Option(None, "--days", help="Scan last N days instead of full week"),
     db: Path = typer.Option(DB_PATH, help="Path to SQLite DB"),
     vault: Path = typer.Option(VAULT_PATH, help="Path to Obsidian vault"),
-    dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Dry run."),
+    dry_run: bool = dry_run_option(),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose."),
 ):
     """Phase 1: scan vault for date strings and extract thread candidates."""
@@ -144,12 +146,15 @@ def classify(
     model: Optional[str] = typer.Option(None, "--model", "-m", help="Model name."),
     db: Path = typer.Option(DB_PATH, help="Path to SQLite DB"),
     context_file: Path = typer.Option(CONTEXT_FILE, "--context-file", "-c", help="Personal context file"),
-    dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Dry run."),
+    dry_run: bool = dry_run_option(),
+    no_llm: bool = no_llm_option(),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose."),
     debug: bool = typer.Option(False, "--debug", "-d", help="Debug."),
 ):
     """Phase 2: use an LLM to suggest dispositions for pending rows."""
-    llm = resolve_provider(PROVIDERS, provider, model, debug=debug)
+    if no_llm:
+        dry_run = True
+    llm = resolve_provider(PROVIDERS, provider, model, debug=debug, no_llm=no_llm)
     
     personal_context = load_personal_context(context_file)
     goal_context = load_goal_context(VAULT_PATH, date.today())
@@ -226,7 +231,7 @@ def add(
     week: Optional[str] = typer.Option(None, "--week", "-w", help="ISO week to assign to"),
     source: str = typer.Option("manual", "--source", "-s", help="Source reference"),
     db: Path = typer.Option(DB_PATH, help="Path to SQLite DB"),
-    dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Dry run."),
+    dry_run: bool = dry_run_option(),
 ):
     """Add a new thread row manually."""
     label = week or week_label(date.today())
@@ -247,7 +252,7 @@ def act(
     db: Path = typer.Option(DB_PATH, help="Path to SQLite DB"),
     vault: Path = typer.Option(VAULT_PATH, help="Path to Obsidian vault"),
     captures_dir: str = typer.Option(CAPTURES_DIR, "--captures-dir", "-C", help="Vault folder for captures"),
-    dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Dry run."),
+    dry_run: bool = dry_run_option(),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose."),
 ):
     """Phase 4: execute actions for all reviewed rows."""

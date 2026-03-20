@@ -405,7 +405,7 @@ sdist = { url = "https://files.pythonhosted.org/packages/0e/72/a3add0e4eec4eb9e2
 [[package]]
 name = "local-first-common"
 version = "0.1.0"
-source = { git = "https://github.com/jamalhansen/local-first-common.git?rev=main#3a7ad71b509274eb383d113f659822c621374044" }
+source = { editable = "../local-first-common" }
 dependencies = [
     { name = "beautifulsoup4" },
     { name = "httpx" },
@@ -416,6 +416,25 @@ dependencies = [
     { name = "pyyaml" },
     { name = "requests" },
     { name = "typer" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "beautifulsoup4", specifier = ">=4.12.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "langdetect", specifier = ">=1.0.9" },
+    { name = "pydantic", specifier = ">=2.12.5" },
+    { name = "pydantic-settings", specifier = ">=2.13.1" },
+    { name = "python-frontmatter", specifier = ">=1.1.0" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "requests", specifier = ">=2.32.5" },
+    { name = "typer", specifier = ">=0.24.1" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "pytest-cov", specifier = ">=7.0.0" },
 ]
 
 [[package]]
@@ -792,7 +811,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", specifier = ">=0.84.0" },
-    { name = "local-first-common", git = "https://github.com/jamalhansen/local-first-common.git?rev=main" },
+    { name = "local-first-common", editable = "../local-first-common" },
     { name = "requests", specifier = ">=2.32.5" },
     { name = "typer", specifier = ">=0.24.1" },
 ]
