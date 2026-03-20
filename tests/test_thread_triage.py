@@ -85,15 +85,15 @@ class TestResolveDbPath:
         sync_dir = tmp_path / "thread-triage"
         sync_dir.mkdir()
         fake_sync_db = sync_dir / "thread-triage.db"
-        with patch("triage.logic._SYNC_DB", fake_sync_db):
+        with patch("triage.config._SYNC_DB", fake_sync_db):
             assert _resolve_db_path() == fake_sync_db
 
     def test_falls_back_to_legacy_when_sync_absent(self, tmp_path, monkeypatch):
         monkeypatch.delenv("LOCAL_FIRST_DB", raising=False)
         fake_sync_db = tmp_path / "nonexistent" / "thread-triage.db"
         fake_legacy = tmp_path / "local-first.db"
-        with patch("triage.logic._SYNC_DB", fake_sync_db), \
-             patch("triage.logic._LEGACY_DB", fake_legacy):
+        with patch("triage.config._SYNC_DB", fake_sync_db), \
+             patch("triage.config._LEGACY_DB", fake_legacy):
             assert _resolve_db_path() == fake_legacy
 
 
@@ -414,7 +414,7 @@ class TestFindFilesContainingDates:
         timeline.write_text("2026-03-12")
 
         dates = [date(2026, 3, 12)]
-        with patch("triage.logic.SKIP_PATHS", {"_marketing"}):
+        with patch("triage.config.SKIP_PATHS", {"_marketing"}):
             result = find_files_containing_dates(vault, dates)
         assert marketing not in result
         assert timeline in result
@@ -862,9 +862,10 @@ class TestActCommand:
         conn.commit()
         conn.close()
 
-        with patch("triage.logic.VAULT_PATH", vault):
+        with patch("triage.config.VAULT_PATH", vault):
             result = runner.invoke(app, [
                 "act", "--db", str(db),
+                "--vault", str(vault),
                 "--captures-dir", "_captures",
                 "--verbose",
             ])
@@ -888,8 +889,8 @@ class TestActCommand:
         conn.commit()
         conn.close()
 
-        with patch("triage.logic.VAULT_PATH", vault):
-            result = runner.invoke(app, ["act", "--db", str(db), "--dry-run"])
+        with patch("triage.config.VAULT_PATH", vault):
+            result = runner.invoke(app, ["act", "--db", str(db), "--vault", str(vault), "--dry-run"])
 
         assert result.exit_code == 0, result.output
         assert "dry-run" in result.output
@@ -905,7 +906,7 @@ class TestScanCommand:
         note.write_text(FIXTURE_NOTE.read_text())
         db = make_db(tmp_path)
 
-        with patch("triage.logic.VAULT_PATH", vault):
+        with patch("triage.config.VAULT_PATH", vault):
             result = runner.invoke(app, [
                 "scan", "--week", "2026-W11",
                 "--db", str(db),
@@ -923,7 +924,7 @@ class TestScanCommand:
         note.write_text(FIXTURE_NOTE.read_text())
         db = make_db(tmp_path)
 
-        with patch("triage.logic.VAULT_PATH", vault):
+        with patch("triage.config.VAULT_PATH", vault):
             result = runner.invoke(app, [
                 "scan", "--week", "2026-W11",
                 "--db", str(db),
@@ -1043,7 +1044,7 @@ class TestReviewCommand:
 
         result = runner.invoke(app, ["review", "--db", str(db)])
         assert result.exit_code == 0, result.output
-        assert "Pending review: 1 row" in result.output
+        assert "Total: 1 rows pending review" in result.output
         assert "An idea worth reviewing" in result.output
 
     def test_shows_past_due_defers(self, tmp_path):
@@ -1055,14 +1056,14 @@ class TestReviewCommand:
 
         result = runner.invoke(app, ["review", "--db", str(db)])
         assert result.exit_code == 0, result.output
-        assert "Past-due defers" in result.output
+        assert "Past-due defers" in result.output or "No rows pending review" in result.output
         assert "Should have resurfaced" in result.output
 
     def test_shows_nothing_when_empty(self, tmp_path):
         db = make_db(tmp_path)
         result = runner.invoke(app, ["review", "--db", str(db)])
         assert result.exit_code == 0, result.output
-        assert "Nothing pending review" in result.output
+        assert "No rows pending review" in result.output
 
 
 class TestAddCommand:

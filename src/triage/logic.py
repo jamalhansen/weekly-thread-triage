@@ -7,79 +7,26 @@ Four phases:
   Phase 4 (act)      — create Obsidian notes for captures, append tasks, stamp executed_at
 """
 
-import os
-import re
 import sqlite3
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Optional
 
 import typer
-from pydantic import BaseModel
 
-from local_first_common.llm import parse_json_response
-from local_first_common.obsidian import find_vault_root, get_week_dates
+from local_first_common.obsidian import get_week_dates
 from local_first_common.providers import PROVIDERS
-from local_first_common.cli import resolve_provider
+from local_first_common.cli import (
+    resolve_provider,
+)
 from local_first_common.text import strip_wikilinks
 
-# ── Config ────────────────────────────────────────────────────────────────────
-
-# DB path resolution — priority: env var → sync location → legacy default.
-# ~/sync/thread-triage/ is auto-discovered when the directory exists, making it
-# easy to place the DB in a cloud-synced folder (iCloud, Dropbox, etc.) without
-# any env var configuration.
-_SYNC_DB   = Path("~/sync/thread-triage/thread-triage.db").expanduser()
-_LEGACY_DB = Path("~/.local-first/local-first.db").expanduser()
-
-
-def _resolve_db_path() -> Path:
-    """Resolve the SQLite DB path.
-
-    Priority:
-    1. LOCAL_FIRST_DB env var — explicit override for any path
-    2. ~/sync/thread-triage/thread-triage.db — auto-discovered if directory exists
-    3. ~/.local-first/local-first.db — legacy default
-    """
-    if explicit := os.environ.get("LOCAL_FIRST_DB"):
-        return Path(explicit).expanduser()
-    if _SYNC_DB.parent.exists():
-        return _SYNC_DB
-    return _LEGACY_DB
-
-
-DB_PATH = _resolve_db_path()
-VAULT_PATH = Path(os.environ.get("OBSIDIAN_VAULT_PATH", "")).expanduser() or find_vault_root()
-
-# Sections whose content counts as a "thought" rather than a task
-THOUGHT_SECTIONS = {"morning pages", "thoughts", "voice journal", "reflections", "early morning"}
-
-# File extensions to scan
-SCAN_EXTENSIONS = {".md"}
-
-# Files/dirs to skip even if they contain date strings.
-# _captures is included to prevent triage's own output notes from being re-scanned
-# on subsequent runs.
-SKIP_DIRS = {".obsidian", ".trash", "Templates", "_captures"}
-
-# Path fragments to skip (colon-separated in LOCAL_FIRST_SKIP_PATHS env var)
-# e.g. LOCAL_FIRST_SKIP_PATHS="_marketing:_strategy:Local-First AI - Prep Timeline"
-SKIP_PATHS: set[str] = {
-    p.strip()
-    for p in os.environ.get("LOCAL_FIRST_SKIP_PATHS", "").split(":")
-    if p.strip()
-}
-
-# Phase 4 — Act: where output lands in the vault
-CAPTURES_DIR = os.environ.get("LOCAL_FIRST_CAPTURES_DIR", "_captures")
-
-# Optional personal context file — prepended to the classify system prompt at runtime.
-# Lives outside the repo so private details (tool names, workflows) never hit git.
-# Override path with LOCAL_FIRST_THREAD_CONTEXT env var; see README for format.
-CONTEXT_FILE = Path(
-    os.environ.get("LOCAL_FIRST_THREAD_CONTEXT", "~/.local-first/thread-triage-context.md")
-).expanduser()
-
+from .config import DB_PATH as DB_PATH, VAULT_PATH as VAULT_PATH, CAPTURES_DIR as CAPTURES_DIR, CONTEXT_FILE as CONTEXT_FILE, _resolve_db_path as _resolve_db_path
+from .db import write_rows as write_rows
+from .scanner import find_files_containing_dates as find_files_containing_dates, extract_threads as extract_threads, deduplicate as deduplicate
+from .classifier import run_classify as run_classify
+from .actor import run_act as run_act, append_task as append_task, create_capture_note as create_capture_note, slugify as slugify
+from .schema import ThreadRow as ThreadRow
 
 def load_personal_context(path: Path) -> str:
     """Return the personal context file contents, or '' if the file doesn't exist."""
@@ -87,23 +34,14 @@ def load_personal_context(path: Path) -> str:
         return path.read_text(encoding="utf-8").strip()
     return ""
 
-
-
 def load_goal_context(vault: Path, target_date: date) -> str:
-    """Load yearly and monthly goal context from the vault.
-
-    Reads Goals/{year}/{year} Goals.md and Goals/{year}/_monthly/{year}-{month:02d}.md.
-    Strips Obsidian frontmatter and wikilinks. Returns '' if neither file exists.
-    This context is prepended to the classify prompt so the LLM can align thread
-    dispositions with active goals (e.g. defer low-priority threads, capture high-signal ones).
-    """
+    """Load yearly and monthly goal context from the vault."""
     year = target_date.year
     month = target_date.month
     sections: list[str] = []
 
     def _load(path: Path) -> str:
         content = path.read_text(encoding="utf-8", errors="ignore")
-        # Strip frontmatter
         if content.startswith("---"):
             end = content.find("\n---", 3)
             if end != -1:
@@ -126,281 +64,50 @@ def load_goal_context(vault: Path, target_date: date) -> str:
 
     return "\n\n".join(sections)
 
+def dates_for_week(target_date: date) -> list[date]:
+    """Return all 7 dates in the ISO week containing target_date."""
+    return get_week_dates(target_date)
 
-# First words that indicate a line is code/SQL, not a natural-language thought
-_SQL_KEYWORDS = {"select", "insert", "update", "delete", "create", "drop", "alter", "with"}
-
-# Obsidian task metadata patterns to strip before checking meaningful word count
-_TASK_METADATA_RE = re.compile(
-    r"📅\s*\d{4}-\d{2}-\d{2}"   # due date
-    r"|⏳\s*\d{4}-\d{2}-\d{2}"  # scheduled date
-    r"|✅\s*\d{4}-\d{2}-\d{2}"  # done date
-    r"|\[\[.*?\]\]"              # Obsidian wiki links
-    r"|https?://\S+"             # URLs
-    r"|#\w+"                     # tags
-)
-
-
-def _meaningful_word_count(text: str) -> int:
-    """Count words remaining after stripping Obsidian task metadata and emojis."""
-    stripped = _TASK_METADATA_RE.sub(" ", text)
-    stripped = re.sub(r"[^\w\s]", " ", stripped)  # emojis, remaining punctuation
-    return len(stripped.split())
-
-app = typer.Typer(help=__doc__)
-
-
-# ── Models ────────────────────────────────────────────────────────────────────
-
-class ThreadRow:
-    """A candidate thread extracted from a vault file."""
-    def __init__(
-        self,
-        week: str,
-        source_file: str,
-        source_section: Optional[str],
-        thread_text: str,
-        thread_type: str,
-    ):
-        self.week = week
-        self.source_file = source_file
-        self.source_section = source_section
-        self.thread_text = thread_text.strip()
-        self.thread_type = thread_type
-
-    def dedup_key(self) -> str:
-        """Normalised text used to detect duplicates across files."""
-        return re.sub(r"\s+", " ", self.thread_text.lower().strip())
-
-
-class Classification(BaseModel):
-    suggested_disposition: str   # capture | task | defer | close | discard
-    suggested_action: str        # one concrete sentence
-    rationale: str               # one sentence why
-
-
-# ── Phase 1: Scan ─────────────────────────────────────────────────────────────
+def dates_for_days(n: int) -> list[date]:
+    """Return the last N calendar dates including today."""
+    from datetime import timedelta
+    today = date.today()
+    return [today - timedelta(days=i) for i in range(n - 1, -1, -1)]
 
 def week_label(target_date: date) -> str:
     """Return ISO week label e.g. '2026-W11'."""
     iso = target_date.isocalendar()
     return f"{iso[0]}-W{iso[1]:02d}"
 
+app = typer.Typer(help=__doc__)
 
-def dates_for_week(target_date: date) -> list[date]:
-    """Return all 7 dates in the ISO week containing target_date."""
-    return get_week_dates(target_date)
+@app.command()
+def scan(
+    week: Optional[str] = typer.Option(None, "--week", "-w", help="ISO week, e.g. 2026-W11"),
+    days: Optional[int] = typer.Option(None, "--days", help="Scan last N days instead of full week"),
+    db: Path = typer.Option(DB_PATH, help="Path to SQLite DB"),
+    vault: Path = typer.Option(VAULT_PATH, help="Path to Obsidian vault"),
+    dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Dry run."),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose."),
+):
+    """Phase 1: scan vault for date strings and extract thread candidates."""
+    target_date = date.today()
+    if week:
+        # Simple parse: 2026-W11
+        y, w = week.split("-W")
+        # Find a date in that week
+        target_date = date.fromisocalendar(int(y), int(w), 1)
+    
+    dates = dates_for_week(target_date)
+    label = week_label(target_date)
+    
+    if days:
+        dates = dates_for_days(days)
+        label = f"last-{days}-days"
 
-
-def dates_for_days(n: int) -> list[date]:
-    """Return the last N calendar dates including today."""
-    today = date.today()
-    return [today - timedelta(days=i) for i in range(n - 1, -1, -1)]
-
-
-def find_files_containing_dates(vault: Path, dates: list[date]) -> dict[Path, set[str]]:
-    """
-    Search vault-wide for files that contain any of the given date strings.
-    Returns {file_path: {matched_date_strings}}.
-    Skips hidden dirs, Templates, and .trash.
-    """
-    date_strings = {d.strftime("%Y-%m-%d") for d in dates}
-    matches: dict[Path, set[str]] = {}
-
-    for path in vault.rglob("*"):
-        if not path.is_file():
-            continue
-        if path.suffix not in SCAN_EXTENSIONS:
-            continue
-        if any(skip in path.parts for skip in SKIP_DIRS):
-            continue
-
-        rel = str(path.relative_to(vault))
-        if SKIP_PATHS and any(skip in rel for skip in SKIP_PATHS):
-            continue
-
-        try:
-            content = path.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
-            continue
-
-        # Strip frontmatter before date matching so that files whose only date
-        # reference is in their YAML metadata (Created, Updated, week, etc.) are
-        # not scanned. We want dates that appear in the body of the note.
-        body = content
-        if content.startswith("---"):
-            end_idx = content.find("\n---", 3)
-            if end_idx != -1:
-                body = content[end_idx + 4:]
-
-        found = {ds for ds in date_strings if ds in body}
-        if found:
-            matches[path] = found
-
-    return matches
-
-
-def current_section(lines: list[str], line_idx: int) -> Optional[str]:
-    """Walk backwards from line_idx to find the most recent ## heading."""
-    for i in range(line_idx - 1, -1, -1):
-        m = re.match(r"^#{1,3}\s+(.+)", lines[i])
-        if m:
-            return m.group(1).strip()
-    return None
-
-
-def extract_threads(path: Path, vault: Path) -> list[ThreadRow]:
-    """Extract tasks, thoughts, and ideas from a single file."""
-    try:
-        content = path.read_text(encoding="utf-8", errors="ignore")
-    except Exception:
-        return []
-
-    lines = content.splitlines()
-    threads: list[ThreadRow] = []
-    rel = str(path.relative_to(vault))
-
-    # Strip frontmatter
-    start = 0
-    if lines and lines[0].strip() == "---":
-        for i, line in enumerate(lines[1:], 1):
-            if line.strip() == "---":
-                start = i + 1
-                break
-
-    for i, line in enumerate(lines[start:], start):
-        section = current_section(lines, i)
-        section_lower = section.lower() if section else ""
-        in_thought_section = any(s in section_lower for s in THOUGHT_SECTIONS)
-
-        # Unwrap Obsidian callout block content in thought sections so that
-        # bullet lines inside Morning Pages callouts are matched normally.
-        # Callout format: first line is "> [!type]- title", continuation lines
-        # are "> content". We drop the opener and strip "> " from the rest.
-        effective_line = line
-        if in_thought_section and re.match(r"^>", line):
-            if re.match(r"^>\s*\[!", line):
-                continue  # drop callout opener line (e.g. "> [!pencil]- ...")
-            effective_line = re.sub(r"^>\s?", "", line)
-
-        # Skip completed [x] and cancelled [-] task markers everywhere
-        if re.match(r"^\s*[-*]\s+\[[-xX]\]", effective_line):
-            continue
-
-        # Unchecked tasks — only from thought sections (other sections are managed by
-        # the Obsidian Tasks plugin and don't need surfacing here)
-        task_match = re.match(r"^\s*-\s+\[ \]\s+(.+)", effective_line)
-        if task_match:
-            if in_thought_section:
-                text = task_match.group(1).strip()
-                if "🔁" in text or "🔄" in text:
-                    continue  # recurring — already tracked
-                if _meaningful_word_count(text) < 4:
-                    continue  # fragment with no real content (fewer than 4 meaningful words)
-                if text:
-                    threads.append(ThreadRow(
-                        week="",  # filled in by caller
-                        source_file=rel,
-                        source_section=section,
-                        thread_text=text,
-                        thread_type="task",
-                    ))
-            continue  # always skip thought check for task-marker lines
-
-        # Thoughts — non-empty bullet lines in thought sections.
-        # Supports standard (-/*), Unicode bullet (∙ U+2219), and common
-        # alternatives (•, ·) used in Early Morning Chat Threads exports.
-        if in_thought_section:
-            thought_match = re.match(r"^\s*[-*∙•·]\s+(.+)", effective_line)
-            if thought_match:
-                text = thought_match.group(1).strip()
-                first_word = text.split()[0].lower().rstrip(";,(\\*") if text else ""
-                if first_word in _SQL_KEYWORDS:
-                    continue
-                if "🔁" in text or "🔄" in text:
-                    continue  # recurring reminder, not a thread
-                if text and len(text.split()) >= 4:
-                    threads.append(ThreadRow(
-                        week="",
-                        source_file=rel,
-                        source_section=section,
-                        thread_text=text,
-                        thread_type="thought",
-                    ))
-
-    return threads
-
-
-def deduplicate(rows: list[ThreadRow]) -> list[ThreadRow]:
-    """Remove rows with identical normalised text, keeping first occurrence."""
-    seen: set[str] = set()
-    unique: list[ThreadRow] = []
-    for row in rows:
-        key = row.dedup_key()
-        if key not in seen:
-            seen.add(key)
-            unique.append(row)
-    return unique
-
-
-def write_rows(db: Path, rows: list[ThreadRow]) -> int:
-    """Insert rows into thread_triage, skipping duplicates.
-
-    Skips a row if:
-    - The same text already exists for this week (same-week dedup), OR
-    - The same text was already actioned in a prior week (human_disposition IS NOT NULL)
-
-    Returns count of new rows inserted.
-    """
-    conn = sqlite3.connect(db)
-    inserted = 0
-    try:
-        for row in rows:
-            # Same-week dedup: don't insert twice for the same week
-            existing = conn.execute(
-                "SELECT id FROM thread_triage WHERE week = ? AND thread_text = ?",
-                (row.week, row.thread_text),
-            ).fetchone()
-            if existing:
-                continue
-
-            # Cross-week dedup: skip if already actioned in a prior week.
-            # Deferred rows are excluded — they resurface each week until the
-            # user assigns a final disposition (capture/task/close/discard).
-            prior_actioned = conn.execute(
-                """SELECT id FROM thread_triage
-                   WHERE thread_text = ? AND human_disposition IS NOT NULL
-                     AND human_disposition != 'defer' AND week != ?""",
-                (row.thread_text, row.week),
-            ).fetchone()
-            if prior_actioned:
-                continue
-
-            conn.execute(
-                """INSERT INTO thread_triage
-                   (week, source_file, source_section, thread_text, thread_type)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (row.week, row.source_file, row.source_section, row.thread_text, row.thread_type),
-            )
-            inserted += 1
-        conn.commit()
-    finally:
-        conn.close()
-    return inserted
-
-
-def run_scan(
-    dates: list[date],
-    week: str,
-    vault: Path,
-    db: Path,
-    dry_run: bool,
-    verbose: bool,
-) -> list[ThreadRow]:
-    """Run Phase 1: scan vault, extract threads, write to DB."""
     if verbose:
         typer.echo(f"[verbose] Scanning vault: {vault}")
-        typer.echo(f"[verbose] Date range: {dates[0]} → {dates[-1]} ({len(dates)} days)")
+        typer.echo(f"[verbose] Date range: {dates[0]} \u2192 {dates[-1]} ({len(dates)} days)")
 
     files = find_files_containing_dates(vault, dates)
     if verbose:
@@ -410,7 +117,7 @@ def run_scan(
     for path in files:
         rows = extract_threads(path, vault)
         for row in rows:
-            row.week = week
+            row.week = label
         all_threads.extend(rows)
 
     unique = deduplicate(all_threads)
@@ -420,577 +127,130 @@ def run_scan(
     if dry_run:
         typer.echo(f"\n[dry-run] Would write {len(unique)} rows to {db}\n")
         for row in unique:
-            typer.echo(f"  [{row.thread_type}] {row.source_file} / {row.source_section or '—'}")
-            typer.echo(f"    {row.thread_text[:80]}{'…' if len(row.thread_text) > 80 else ''}")
-        return unique
+            typer.echo(f"  [{row.thread_type}] {row.source_file} / {row.source_section or '-'}")
+            typer.echo(f"    {row.thread_text[:80]}{'...' if len(row.thread_text) > 80 else ''}")
+        return
 
     inserted = write_rows(db, unique)
     typer.echo(f"Phase 1 complete. New rows: {inserted}, Duplicates skipped: {len(unique) - inserted}")
-    return unique
-
-
-# ── Phase 2: Classify ─────────────────────────────────────────────────────────
-
-DISPOSITION_CHOICES = "capture | task | defer | close | discard"
-
-SYSTEM_PROMPT = """You are a productivity assistant helping classify open threads from a personal knowledge vault.
-
-For each thread, suggest one of these dispositions:
-- capture: this is a distinct idea worth turning into a tool spec, project note, or reference
-- task: this is concrete work with a clear next action; add it to a task list
-- defer: this is worth revisiting but not actionable this week
-- close: this is already done, or no longer relevant
-- discard: this is noise — captured in the moment, no lasting value
-
-Be concise and decisive. One disposition per thread. One sentence for action and rationale."""
-
-
-def build_context_payload(conn: sqlite3.Connection) -> str:
-    """Build a compact context string to ground the LLM's classifications."""
-    # Recent dispositions (avoid re-suggesting already-handled things)
-    recent = conn.execute(
-        """SELECT thread_text, human_disposition FROM thread_triage
-           WHERE human_disposition IS NOT NULL
-           ORDER BY created_at DESC LIMIT 10"""
-    ).fetchall()
-
-    lines = ["Recent dispositions (for context — avoid re-suggesting these):"]
-    for text, disp in recent:
-        lines.append(f"  [{disp}] {text[:60]}")
-
-    return "\n".join(lines) if recent else ""
-
-
-def classify_row(
-    llm,
-    row_id: int,
-    thread_text: str,
-    thread_type: str,
-    context: str,
-    system_prompt: str = SYSTEM_PROMPT,
-) -> Classification:
-    """Call LLM to classify a single thread row."""
-
-    user = f"""Thread type: {thread_type}
-Thread text: {thread_text}
-
-{context}
-
-Respond with JSON only:
-{{
-  "suggested_disposition": "{DISPOSITION_CHOICES}",
-  "suggested_action": "one concrete sentence",
-  "rationale": "one sentence explaining why"
-}}"""
-
-    raw = llm.complete(system_prompt, user)
-    data = parse_json_response(raw)
-    return Classification(**data)
-
-
-def run_classify(
-    db: Path,
-    llm,
-    dry_run: bool,
-    verbose: bool,
-    context_file: Path = CONTEXT_FILE,
-) -> int:
-    """Run Phase 2: classify all pending rows. Returns count processed."""
-    personal_context = load_personal_context(context_file)
-    effective_prompt = SYSTEM_PROMPT
-    if personal_context:
-        effective_prompt = f"{SYSTEM_PROMPT}\n\n## Personal Context\n\n{personal_context}"
-
-    goal_context = load_goal_context(VAULT_PATH, date.today())
-    if goal_context:
-        effective_prompt = effective_prompt + "\n\n## Goal Context\n\n" + goal_context
-
-    conn = sqlite3.connect(db)
-    try:
-        pending = conn.execute(
-            """SELECT id, thread_text, thread_type FROM thread_triage
-               WHERE suggested_disposition IS NULL
-               ORDER BY created_at"""
-        ).fetchall()
-
-        if not pending:
-            typer.echo("No pending rows to classify.")
-            return 0
-
-        if verbose:
-            typer.echo(f"[verbose] Classifying {len(pending)} pending rows...")
-            if personal_context:
-                typer.echo(f"[verbose] Personal context loaded from {context_file} ({len(personal_context)} chars)")
-            else:
-                typer.echo(f"[verbose] No personal context file found at {context_file}")
-            if goal_context:
-                typer.echo(f"[verbose] Goal context loaded ({len(goal_context)} chars)")
-
-        context = build_context_payload(conn)
-        processed = 0
-
-        for row_id, thread_text, thread_type in pending:
-            try:
-                result = classify_row(
-                    llm, row_id, thread_text, thread_type or "thought", context,
-                    system_prompt=effective_prompt,
-                )
-            except Exception as e:
-                typer.echo(f"  [error] Row {row_id}: {e}", err=True)
-                continue
-
-            if dry_run:
-                typer.echo(f"\n[dry-run] Row {row_id}: {thread_text[:60]}…")
-                typer.echo(f"  disposition: {result.suggested_disposition}")
-                typer.echo(f"  action: {result.suggested_action}")
-                typer.echo(f"  rationale: {result.rationale}")
-            else:
-                conn.execute(
-                    """UPDATE thread_triage
-                       SET suggested_disposition = ?, suggested_action = ?, rationale = ?
-                       WHERE id = ?""",
-                    (result.suggested_disposition, result.suggested_action, result.rationale, row_id),
-                )
-                conn.commit()
-                if verbose:
-                    typer.echo(f"  Row {row_id}: {result.suggested_disposition} — {result.suggested_action}")
-
-            processed += 1
-
-        return processed
-    finally:
-        conn.close()
-
-
-# ── Phase 4: Act ──────────────────────────────────────────────────────────────
-
-def slugify(text: str, max_words: int = 8) -> str:
-    """Convert text to a readable, filename-safe slug."""
-    text = text.lower().strip()
-    text = re.sub(r"[^\w\s]", " ", text)       # strip punctuation
-    words = text.split()[:max_words]
-    return "-".join(w for w in words if w)
-
-
-def create_capture_note(
-    row_id: int,
-    week: str,
-    source_file: str,
-    thread_text: str,
-    suggested_action: str,
-    rationale: str,
-    vault: Path,
-    captures_dir: str,
-    dry_run: bool,
-) -> Path:
-    """Write an Obsidian capture note. Returns the target path (even in dry-run)."""
-    today = date.today().strftime("%Y-%m-%d")
-    slug = slugify(suggested_action or thread_text)
-    note_dir = vault / captures_dir
-    note_path = note_dir / f"{today} {slug}.md"
-    title = (suggested_action or thread_text).rstrip(".")
-
-    content = (
-        f"---\n"
-        f"created: {today}\n"
-        f"week: {week}\n"
-        f"type: capture\n"
-        f"source: {source_file}\n"
-        f"triage_id: {row_id}\n"
-        f"---\n\n"
-        f"# {title}\n\n"
-        f"> {thread_text}\n\n"
-        f"## Rationale\n\n"
-        f"{rationale}\n"
-    )
-
-    if not dry_run:
-        note_dir.mkdir(parents=True, exist_ok=True)
-        note_path.write_text(content, encoding="utf-8")
-
-    return note_path
-
-
-def append_task(
-    suggested_action: str,
-    source_file: str,
-    vault: Path,
-    dry_run: bool,
-) -> Path:
-    """Append a task line to today's daily note Actions section.
-
-    Creates the note and/or Actions section if they don't exist.
-    Returns the daily note path.
-    """
-    today = date.today()
-    note_path = vault / "Timeline" / f"{today.isoformat()}.md"
-    task_line = f"- [ ] {suggested_action} ([[{source_file}]])"
-
-    if not dry_run:
-        note_path.parent.mkdir(parents=True, exist_ok=True)
-        content = note_path.read_text(encoding="utf-8") if note_path.exists() else f"# {today.isoformat()}\n\n## Actions\n\n"
-
-        actions_heading = "\n## Actions\n"
-        if actions_heading in content:
-            before, _, after = content.partition(actions_heading)
-            # Append to end of Actions section (before the next ## heading, or EOF)
-            if "\n## " in after:
-                idx = after.index("\n## ")
-                new_content = before + actions_heading + after[:idx].rstrip() + f"\n{task_line}\n" + after[idx:]
-            else:
-                new_content = content.rstrip() + f"\n{task_line}\n"
-        else:
-            new_content = content.rstrip() + f"\n\n## Actions\n\n{task_line}\n"
-
-        note_path.write_text(new_content, encoding="utf-8")
-
-    return note_path
-
-
-def run_act(
-    db: Path,
-    vault: Path,
-    captures_dir: str,
-    dry_run: bool,
-    verbose: bool,
-) -> tuple[int, int, int]:
-    """Run Phase 4: act on all reviewed rows that haven't been executed yet.
-
-    - capture  → create an Obsidian note in captures_dir
-    - task     → append a task line to tasks_file
-    - close / discard → stamp executed_at, no note needed
-    - defer    → skip (no resurface mechanism yet)
-
-    Returns (acted, deferred, errors).
-    """
-    conn = sqlite3.connect(db)
-    acted = deferred = errors = 0
-    try:
-        pending = conn.execute(
-            """SELECT id, week, source_file, thread_text,
-                      suggested_action, rationale, human_disposition
-               FROM thread_triage
-               WHERE human_disposition IS NOT NULL AND executed_at IS NULL
-               ORDER BY created_at"""
-        ).fetchall()
-
-        if not pending:
-            typer.echo("No rows pending action.")
-            return 0, 0, 0
-
-        if verbose:
-            typer.echo(f"[verbose] {len(pending)} rows to act on...")
-
-        for row_id, week, source_file, thread_text, suggested_action, rationale, disp in pending:
-            try:
-                if disp == "capture":
-                    path = create_capture_note(
-                        row_id, week, source_file, thread_text,
-                        suggested_action or "", rationale or "",
-                        vault, captures_dir, dry_run,
-                    )
-                    typer.echo(f"  [capture] {path.name}")
-
-                elif disp == "task":
-                    path = append_task(
-                        suggested_action or thread_text, source_file,
-                        vault, dry_run,
-                    )
-                    typer.echo(f"  [task] → {path.name}")
-
-                elif disp in ("close", "discard"):
-                    if verbose:
-                        typer.echo(f"  [{disp}] {thread_text[:70]}…")
-
-                elif disp == "defer":
-                    deferred += 1
-                    if not dry_run:
-                        conn.execute(
-                            "UPDATE thread_triage SET resurface_after = date('now', '+7 days') WHERE id = ?",
-                            (row_id,),
-                        )
-                    if verbose:
-                        typer.echo(f"  [defer] resurface after 7 days: {thread_text[:60]}…")
-                    continue  # leave executed_at NULL
-
-                else:
-                    if verbose:
-                        typer.echo(f"  [unknown:{disp}] {thread_text[:70]}…")
-
-                if not dry_run:
-                    conn.execute(
-                        "UPDATE thread_triage SET executed_at = datetime('now') WHERE id = ?",
-                        (row_id,),
-                    )
-                acted += 1
-
-            except Exception as e:
-                typer.echo(f"  [error] Row {row_id}: {e}", err=True)
-                errors += 1
-
-        conn.commit()
-    finally:
-        conn.close()
-
-    return acted, deferred, errors
-
-
-# ── CLI ───────────────────────────────────────────────────────────────────────
-
-@app.command()
-def scan(
-    week: Annotated[
-        Optional[str],
-        typer.Option("--week", "-w", help="ISO week to scan, e.g. 2026-W11. Defaults to current week."),
-    ] = None,
-    days: Annotated[
-        Optional[int],
-        typer.Option("--days", help="Scan last N days instead of a full ISO week."),
-    ] = None,
-    db: Annotated[
-        str,
-        typer.Option("--db", help="Path to local-first.db. Defaults to LOCAL_FIRST_DB env var or ~/.local-first/local-first.db."),
-    ] = str(DB_PATH),
-    dry_run: Annotated[
-        bool,
-        typer.Option("--dry-run", "-n", help="Show what would be written without touching the DB."),
-    ] = False,
-    verbose: Annotated[
-        bool,
-        typer.Option("--verbose", "-v", help="Show progress detail."),
-    ] = False,
-):
-    """Phase 1 — scan vault for open threads and write to SQLite."""
-    db_path = Path(db).expanduser()
-
-    if not dry_run and not db_path.exists():
-        typer.echo(f"Error: DB not found at {db_path}. Create it first or set LOCAL_FIRST_DB.", err=True)
-        raise typer.Exit(1)
-
-    if days:
-        dates = dates_for_days(days)
-        label = week_label(dates[-1])
-    else:
-        target = date.today()
-        if week:
-            # Parse YYYY-WNN
-            m = re.match(r"(\d{4})-W(\d{1,2})", week)
-            if not m:
-                typer.echo("Error: --week must be in format YYYY-WNN, e.g. 2026-W11", err=True)
-                raise typer.Exit(1)
-            year, wnum = int(m.group(1)), int(m.group(2))
-            # Get the Monday of that week
-            target = date.fromisocalendar(year, wnum, 1)
-            label = week
-        else:
-            label = week_label(target)
-        dates = dates_for_week(target)
-
-    run_scan(dates, label, VAULT_PATH, db_path, dry_run, verbose)
-    if not dry_run:
-        typer.echo("\nDone. Processed: 1, Skipped: 0")
-
 
 @app.command()
 def classify(
-    db: Annotated[
-        str,
-        typer.Option("--db", help="Path to local-first.db."),
-    ] = str(DB_PATH),
-    provider: Annotated[
-        str,
-        typer.Option("--provider", "-p", help=f"LLM provider. Choices: {', '.join(PROVIDERS.keys())}"),
-    ] = os.environ.get("MODEL_PROVIDER", "ollama"),
-    model: Annotated[
-        Optional[str],
-        typer.Option("--model", "-m", help="Override the provider's default model."),
-    ] = None,
-    dry_run: Annotated[
-        bool,
-        typer.Option("--dry-run", "-n", help="Show classifications without writing to DB."),
-    ] = False,
-    verbose: Annotated[
-        bool,
-        typer.Option("--verbose", "-v", help="Show progress detail."),
-    ] = False,
-    debug: Annotated[
-        bool,
-        typer.Option("--debug", "-d", help="Show raw LLM prompts and responses."),
-    ] = False,
-    context_file: Annotated[
-        str,
-        typer.Option("--context-file", "-c", help="Path to personal context .md file prepended to the classify prompt. Defaults to LOCAL_FIRST_THREAD_CONTEXT or ~/.local-first/thread-triage-context.md."),
-    ] = str(CONTEXT_FILE),
+    provider: str = typer.Option("ollama", "--provider", "-p", help="LLM provider."),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="Model name."),
+    db: Path = typer.Option(DB_PATH, help="Path to SQLite DB"),
+    context_file: Path = typer.Option(CONTEXT_FILE, "--context-file", "-c", help="Personal context file"),
+    dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Dry run."),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose."),
+    debug: bool = typer.Option(False, "--debug", "-d", help="Debug."),
 ):
-    """Phase 2 — classify pending rows with the LLM."""
-    db_path = Path(db).expanduser()
+    """Phase 2: use an LLM to suggest dispositions for pending rows."""
+    llm = resolve_provider(PROVIDERS, provider, model, debug=debug)
+    
+    personal_context = load_personal_context(context_file)
+    goal_context = load_goal_context(VAULT_PATH, date.today())
+    
+    if verbose and personal_context:
+        typer.echo(f"[verbose] Personal context loaded from {context_file}")
+    if verbose and goal_context:
+        typer.echo("[verbose] Goal context loaded from vault")
 
-    if not db_path.exists():
-        typer.echo(f"Error: DB not found at {db_path}.", err=True)
-        raise typer.Exit(1)
-
-    try:
-        llm = resolve_provider(PROVIDERS, provider, model, debug=debug)
-    except (RuntimeError, ValueError) as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
-
-    processed = run_classify(db_path, llm, dry_run, verbose, context_file=Path(context_file).expanduser())
-    typer.echo(f"\nDone. Processed: {processed}, Skipped: 0")
-
+    count = run_classify(
+        db, llm, dry_run, verbose,
+        personal_context=personal_context,
+        goal_context=goal_context
+    )
+    typer.echo(f"Phase 2 complete. Processed {count} rows.")
 
 @app.command()
 def review(
-    db: Annotated[
-        str,
-        typer.Option("--db", help="Path to local-first.db."),
-    ] = str(DB_PATH),
-    week: Annotated[
-        Optional[str],
-        typer.Option("--week", "-w", help="Filter unreviewed rows to a specific ISO week, e.g. 2026-W11."),
-    ] = None,
+    db: Path = typer.Option(DB_PATH, help="Path to SQLite DB"),
+    week: Optional[str] = typer.Option(None, "--week", "-w", help="Filter to ISO week"),
 ):
-    """Phase 3 helper — show past-due defers and rows pending human review."""
-    db_path = Path(db).expanduser()
-    if not db_path.exists():
-        typer.echo(f"Error: DB not found at {db_path}.", err=True)
-        raise typer.Exit(1)
+    """Phase 3 helper: show rows pending human review."""
+    conn = sqlite3.connect(db)
+    query = "SELECT id, week, source_file, thread_text FROM thread_triage WHERE human_disposition IS NULL"
+    params = []
+    if week:
+        query += " AND week = ?"
+        params.append(week)
+    
+    rows = conn.execute(query, params).fetchall()
+    
+    # Past-due defers
+    defers = conn.execute(
+        """SELECT id, week, source_file, thread_text, resurface_after
+           FROM thread_triage
+           WHERE human_disposition = 'defer'
+             AND executed_at IS NULL
+             AND resurface_after IS NOT NULL
+             AND resurface_after <= date('now')
+           ORDER BY resurface_after"""
+    ).fetchall()
 
-    conn = sqlite3.connect(db_path)
-    try:
-        # Past-due defers whose resurface_after has passed
-        defers = conn.execute(
-            """SELECT id, week, source_file, thread_text, resurface_after
-               FROM thread_triage
-               WHERE human_disposition = 'defer'
-                 AND executed_at IS NULL
-                 AND resurface_after IS NOT NULL
-                 AND resurface_after <= date('now')
-               ORDER BY resurface_after"""
-        ).fetchall()
-
-        if defers:
-            typer.echo(f"\n!  Past-due defers ({len(defers)}) — ready to resurface:\n")
-            for row_id, wk, src, text, resurface in defers:
-                typer.echo(f"  [{row_id}] due {resurface} | {wk} | {src}")
-                typer.echo(f"    {text[:80]}{'...' if len(text) > 80 else ''}")
-
-        # Rows not yet reviewed (no human_disposition)
-        if week:
-            pending = conn.execute(
-                """SELECT id, week, source_file, thread_text, suggested_disposition, suggested_action
-                   FROM thread_triage
-                   WHERE human_disposition IS NULL AND week = ?
-                   ORDER BY created_at""",
-                (week,),
-            ).fetchall()
-        else:
-            pending = conn.execute(
-                """SELECT id, week, source_file, thread_text, suggested_disposition, suggested_action
-                   FROM thread_triage
-                   WHERE human_disposition IS NULL
-                   ORDER BY week, created_at"""
-            ).fetchall()
-
-        typer.echo(f"\nPending review: {len(pending)} row{'s' if len(pending) != 1 else ''}")
-        for row_id, wk, src, text, sugg_disp, sugg_action in pending:
-            typer.echo(f"\n  [{row_id}] [{wk}] {src}")
+    if defers:
+        typer.echo(f"\n!  Past-due defers ({len(defers)}) \u2014 ready to resurface:\n")
+        for row_id, wk, src, text, resurface in defers:
+            typer.echo(f"  [{row_id}] due {resurface} | {wk} | {src}")
             typer.echo(f"    {text[:80]}{'...' if len(text) > 80 else ''}")
-            if sugg_disp:
-                typer.echo(f"    -> {sugg_disp}: {(sugg_action or '')[:70]}")
 
-        if not defers and not pending:
-            typer.echo("Nothing pending review.")
-    finally:
-        conn.close()
+    if not rows:
+        if not defers:
+            typer.echo("No rows pending review.")
+        return
 
+    from rich.console import Console
+    from rich.table import Table
+    console = Console()
+    table = Table(title="Pending Review")
+    table.add_column("ID", justify="right", style="cyan")
+    table.add_column("Week", style="magenta")
+    table.add_column("Source", style="green")
+    table.add_column("Text")
+
+    for r_id, r_week, r_source, r_text in rows:
+        table.add_row(str(r_id), r_week, r_source, r_text[:100])
+    
+    console.print(table)
+    typer.echo(f"\nTotal: {len(rows)} rows pending review.")
+    typer.echo("Use SQLite MCP or direct SQL to set human_disposition.")
 
 @app.command()
 def add(
-    text: Annotated[str, typer.Argument(help="Thread text to add.")],
-    db: Annotated[
-        str,
-        typer.Option("--db", help="Path to local-first.db."),
-    ] = str(DB_PATH),
-    thread_type: Annotated[
-        str,
-        typer.Option("--type", "-t", help="Thread type: thought or task."),
-    ] = "thought",
-    week: Annotated[
-        Optional[str],
-        typer.Option("--week", "-w", help="ISO week, e.g. 2026-W11. Defaults to current week."),
-    ] = None,
-    source: Annotated[
-        str,
-        typer.Option("--source", "-s", help="Source file reference shown in review output."),
-    ] = "manual",
-    dry_run: Annotated[
-        bool,
-        typer.Option("--dry-run", "-n", help="Show what would be added without writing."),
-    ] = False,
+    text: str = typer.Argument(..., help="The thread text to add"),
+    type: str = typer.Option("thought", "--type", "-t", help="Thread type: task or thought"),
+    week: Optional[str] = typer.Option(None, "--week", "-w", help="ISO week to assign to"),
+    source: str = typer.Option("manual", "--source", "-s", help="Source reference"),
+    db: Path = typer.Option(DB_PATH, help="Path to SQLite DB"),
+    dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Dry run."),
 ):
-    """Add a new thread row during Phase 3 review (no raw SQL needed)."""
-    db_path = Path(db).expanduser()
-    if not db_path.exists():
-        typer.echo(f"Error: DB not found at {db_path}.", err=True)
-        raise typer.Exit(1)
-
-    current_week = week or week_label(date.today())
-
+    """Add a new thread row manually."""
+    label = week or week_label(date.today())
+    row = ThreadRow(label, source, "manual", text, type)
+    
     if dry_run:
-        typer.echo(f"[dry-run] Would add: [{thread_type}] {text[:80]}")
-        typer.echo(f"  week: {current_week}  source: {source}")
+        typer.echo(f"[dry-run] Would add: [{type}] {text} to week {label}")
         return
 
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.execute(
-            """INSERT INTO thread_triage (week, source_file, thread_text, thread_type)
-               VALUES (?, ?, ?, ?)""",
-            (current_week, source, text, thread_type),
-        )
-        conn.commit()
-        row_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-        typer.echo(f"Added row {row_id}: [{thread_type}] {text[:60]}{'...' if len(text) > 60 else ''}")
-    finally:
-        conn.close()
-
+    inserted = write_rows(db, [row])
+    if inserted:
+        typer.echo(f"Added manually to week {label}")
+    else:
+        typer.echo("Row already exists.")
 
 @app.command()
 def act(
-    db: Annotated[
-        str,
-        typer.Option("--db", help="Path to local-first.db."),
-    ] = str(DB_PATH),
-    captures_dir: Annotated[
-        str,
-        typer.Option("--captures-dir", "-C", help="Vault-relative folder for capture notes. Defaults to LOCAL_FIRST_CAPTURES_DIR or '_captures'."),
-    ] = CAPTURES_DIR,
-    dry_run: Annotated[
-        bool,
-        typer.Option("--dry-run", "-n", help="Show what would be created/written without touching files or the DB."),
-    ] = False,
-    verbose: Annotated[
-        bool,
-        typer.Option("--verbose", "-v", help="Show per-row detail including close/discard."),
-    ] = False,
+    db: Path = typer.Option(DB_PATH, help="Path to SQLite DB"),
+    vault: Path = typer.Option(VAULT_PATH, help="Path to Obsidian vault"),
+    captures_dir: str = typer.Option(CAPTURES_DIR, "--captures-dir", "-C", help="Vault folder for captures"),
+    dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Dry run."),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose."),
 ):
-    """Phase 4 — act on reviewed rows: create capture notes, append tasks to today's daily note, stamp executed_at."""
-    db_path = Path(db).expanduser()
-
-    if not db_path.exists():
-        typer.echo(f"Error: DB not found at {db_path}.", err=True)
-        raise typer.Exit(1)
-
-    if not dry_run and not VAULT_PATH.exists():
-        typer.echo(f"Error: Vault not found at {VAULT_PATH}. Set OBSIDIAN_VAULT_PATH.", err=True)
-        raise typer.Exit(1)
-
-    acted, deferred, errors = run_act(db_path, VAULT_PATH, captures_dir, dry_run, verbose)
-
-    suffix = " (dry-run)" if dry_run else ""
-    typer.echo(f"\nDone{suffix}. Acted: {acted}, Deferred (skipped): {deferred}, Errors: {errors}")
-
+    """Phase 4: execute actions for all reviewed rows."""
+    if dry_run:
+        typer.echo("[dry-run] Would execute actions...")
+    acted, deferred, errors = run_act(db, vault, captures_dir, dry_run, verbose)
+    typer.echo(f"Phase 4 complete. Acted: {acted}, Deferred: {deferred}, Errors: {errors}")
 
 if __name__ == "__main__":
     app()
