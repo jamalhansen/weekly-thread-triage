@@ -66,7 +66,7 @@ uv run python src/main.py scan --week 2026-W11
 uv run python src/main.py scan --days 3
 
 # Dry-run: see what would be written
-uv run python src/main.py scan --dry-run -n: Call LLM but do not save results. Print to stdout.
+uv run python src/main.py scan --dry-run
 
 # Classify pending rows (default: ollama)
 uv run python src/main.py classify
@@ -81,7 +81,10 @@ uv run python src/main.py classify --provider ollama --model llama3.2:3b
 uv run python src/main.py classify --provider anthropic --context-file ~/.local-first/thread-triage-context.md
 
 # Dry-run classification
-uv run python src/main.py classify --dry-run -n: Call LLM but do not save results. Print to stdout.
+uv run python src/main.py classify --dry-run
+
+# Skip LLM entirely (for testing CLI args without inference)
+uv run python src/main.py classify --no-llm
 
 # Phase 3 helper — see what's pending review and any past-due defers
 uv run python src/main.py review
@@ -97,7 +100,7 @@ uv run python src/main.py add "Fix the scanner edge case" --type task --week 202
 uv run python src/main.py act
 
 # Preview what act would do without writing anything
-uv run python src/main.py act --dry-run -n: Call LLM but do not save results. Print to stdout.
+uv run python src/main.py act --dry-run
 
 # Override where capture notes land
 uv run python src/main.py act --captures-dir "_captures"
@@ -114,7 +117,8 @@ All tools in this series share a common set of CLI flags for model management vi
 | `--week` | `-w` | current week | ISO week, e.g. `2026-W11` |
 | `--days` | | — | Scan last N days instead of full week |
 | `--db` | | `LOCAL_FIRST_DB` or auto-discovered | Path to SQLite DB |
-| `--dry-run -n: Call LLM but do not save results. Print to stdout.
+| `--dry-run` | `-n` | false | Call LLM but do not save results to disk/vault/DB. Print to stdout. |
+| `--no-llm` | | false | Skip LLM call, use mock response. Implies `--dry-run`. |
 | `--verbose` | `-v` | false | Show progress detail |
 
 ### `classify`
@@ -125,7 +129,8 @@ All tools in this series share a common set of CLI flags for model management vi
 | `--model` | `-m` | provider default | Override provider's default model |
 | `--db` | | `LOCAL_FIRST_DB` or auto-discovered | Path to SQLite DB |
 | `--context-file` | `-c` | `~/.local-first/thread-triage-context.md` | Personal context file prepended to the classify prompt |
-| `--dry-run -n: Call LLM but do not save results. Print to stdout.
+| `--dry-run` | `-n` | false | Call LLM but do not save results to disk/vault/DB. Print to stdout. |
+| `--no-llm` | | false | Skip LLM call, use mock response. Implies `--dry-run`. |
 | `--verbose` | `-v` | false | Show row-by-row progress |
 | `--debug` | `-d` | false | Show raw LLM prompts and responses |
 
@@ -144,7 +149,8 @@ All tools in this series share a common set of CLI flags for model management vi
 | `--type` | `-t` | `thought` | Thread type: `thought` or `task` |
 | `--week` | `-w` | current week | ISO week to assign the row to |
 | `--source` | `-s` | `manual` | Source file reference shown in review output |
-| `--dry-run -n: Call LLM but do not save results. Print to stdout.
+| `--dry-run` | `-n` | false | Call LLM but do not save results to disk/vault/DB. Print to stdout. |
+| `--no-llm` | | false | Skip LLM call, use mock response. Implies `--dry-run`. |
 
 ### `act`
 
@@ -152,7 +158,8 @@ All tools in this series share a common set of CLI flags for model management vi
 |------|-------|---------|-------------|
 | `--db` | | auto-discovered | Path to SQLite DB |
 | `--captures-dir` | `-C` | `_captures` | Vault-relative folder for capture notes |
-| `--dry-run -n: Call LLM but do not save results. Print to stdout.
+| `--dry-run` | `-n` | false | Call LLM but do not save results to disk/vault/DB. Print to stdout. |
+| `--no-llm` | | false | Skip LLM call, use mock response. Implies `--dry-run`. |
 | `--verbose` | `-v` | false | Show close/discard rows too |
 
 ## Environment variables
