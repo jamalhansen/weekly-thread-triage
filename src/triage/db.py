@@ -1,42 +1,42 @@
 import sqlite3
 from pathlib import Path
 from typing import List
+from local_first_common import db
 from .schema import ThreadRow
 
-def write_rows(db: Path, rows: List[ThreadRow]) -> int:
+def write_rows(db_path: Path, rows: List[ThreadRow]) -> int:
     """Insert rows into thread_triage, skipping duplicates."""
-    conn = sqlite3.connect(db)
     inserted = 0
-    try:
+    with db.get_db_cursor(db_path) as cur:
+        if cur is None:
+            return 0
         for row in rows:
             # Same-week dedup
-            existing = conn.execute(
+            cur.execute(
                 "SELECT id FROM thread_triage WHERE week = ? AND thread_text = ?",
                 (row.week, row.thread_text),
-            ).fetchone()
-            if existing:
+            )
+            if cur.fetchone():
                 continue
 
             # Cross-week dedup
-            prior_actioned = conn.execute(
+            cur.execute(
                 """SELECT id FROM thread_triage
                    WHERE thread_text = ? AND human_disposition IS NOT NULL
                      AND human_disposition != 'defer' AND week != ?""",
                 (row.thread_text, row.week),
-            ).fetchone()
-            if prior_actioned:
+            )
+            if cur.fetchone():
                 continue
 
-            conn.execute(
+            cur.execute(
                 """INSERT INTO thread_triage
                    (week, source_file, source_section, thread_text, thread_type)
                    VALUES (?, ?, ?, ?, ?)""",
                 (row.week, row.source_file, row.source_section, row.thread_text, row.thread_type),
             )
             inserted += 1
-        conn.commit()
-    finally:
-        conn.close()
+        cur.connection.commit()
     return inserted
 
 def build_context_payload(conn: sqlite3.Connection) -> str:

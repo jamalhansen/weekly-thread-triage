@@ -131,6 +131,10 @@ def scan(
             typer.echo(f"    {row.thread_text[:80]}{'...' if len(row.thread_text) > 80 else ''}")
         return
 
+    if not dry_run and not db.exists():
+        typer.echo(f"Error: database not found at {db}", err=True)
+        raise typer.Exit(1)
+
     inserted = write_rows(db, unique)
     typer.echo(f"Phase 1 complete. New rows: {inserted}, Duplicates skipped: {len(unique) - inserted}")
 
