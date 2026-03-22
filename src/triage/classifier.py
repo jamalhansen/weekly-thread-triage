@@ -2,6 +2,7 @@ import sqlite3
 import typer
 from pathlib import Path
 from local_first_common.llm import parse_json_response
+from local_first_common.tracking import timed_run
 from .schema import Classification
 from .prompts import SYSTEM_PROMPT, build_user_prompt
 from .db import build_context_payload
@@ -53,33 +54,36 @@ def run_classify(
         context = build_context_payload(conn)
         processed = 0
 
-        for row_id, thread_text, thread_type in pending:
-            try:
-                result = classify_row(
-                    llm, row_id, thread_text, thread_type or "thought", context,
-                    system_prompt=effective_prompt,
-                )
-            except Exception as e:
-                typer.echo(f"  [error] Row {row_id}: {e}", err=True)
-                continue
+        with timed_run("weekly-thread-triage", getattr(llm, "model", None)) as _run:
+            for row_id, thread_text, thread_type in pending:
+                try:
+                    result = classify_row(
+                        llm, row_id, thread_text, thread_type or "thought", context,
+                        system_prompt=effective_prompt,
+                    )
+                except Exception as e:
+                    typer.echo(f"  [error] Row {row_id}: {e}", err=True)
+                    continue
 
-            if dry_run:
-                typer.echo(f"\n[dry-run] Row {row_id}: {thread_text[:60]}…")
-                typer.echo(f"  disposition: {result.suggested_disposition}")
-                typer.echo(f"  action: {result.suggested_action}")
-                typer.echo(f"  rationale: {result.rationale}")
-            else:
-                conn.execute(
-                    """UPDATE thread_triage
-                       SET suggested_disposition = ?, suggested_action = ?, rationale = ?
-                       WHERE id = ?""",
-                    (result.suggested_disposition, result.suggested_action, result.rationale, row_id),
-                )
-                conn.commit()
-                if verbose:
-                    typer.echo(f"  Row {row_id}: {result.suggested_disposition} — {result.suggested_action}")
+                if dry_run:
+                    typer.echo(f"\n[dry-run] Row {row_id}: {thread_text[:60]}…")
+                    typer.echo(f"  disposition: {result.suggested_disposition}")
+                    typer.echo(f"  action: {result.suggested_action}")
+                    typer.echo(f"  rationale: {result.rationale}")
+                else:
+                    conn.execute(
+                        """UPDATE thread_triage
+                           SET suggested_disposition = ?, suggested_action = ?, rationale = ?
+                           WHERE id = ?""",
+                        (result.suggested_disposition, result.suggested_action, result.rationale, row_id),
+                    )
+                    conn.commit()
+                    if verbose:
+                        typer.echo(f"  Row {row_id}: {result.suggested_disposition} — {result.suggested_action}")
 
-            processed += 1
+                processed += 1
+
+            _run.item_count = processed
 
         return processed
     finally:
