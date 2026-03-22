@@ -84,6 +84,8 @@ def run_classify(
                 processed += 1
 
             _run.item_count = processed
+            _run.input_tokens = getattr(llm, "input_tokens", None) or None
+            _run.output_tokens = getattr(llm, "output_tokens", None) or None
 
         return processed
     finally:
