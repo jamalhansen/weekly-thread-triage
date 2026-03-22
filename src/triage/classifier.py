@@ -2,10 +2,12 @@ import sqlite3
 import typer
 from pathlib import Path
 from local_first_common.llm import parse_json_response
-from local_first_common.tracking import timed_run
+from local_first_common.tracking import register_tool, timed_run
 from .schema import Classification
 from .prompts import SYSTEM_PROMPT, build_user_prompt
 from .db import build_context_payload
+
+_TOOL = register_tool("weekly-thread-triage")
 
 def classify_row(
     llm,
