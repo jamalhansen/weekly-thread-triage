@@ -18,6 +18,7 @@ from local_first_common.obsidian import get_week_dates
 from local_first_common.providers import PROVIDERS
 from local_first_common.cli import (
     resolve_provider,
+    resolve_dry_run,
     dry_run_option,
     no_llm_option,
 )
@@ -152,8 +153,7 @@ def classify(
     debug: bool = typer.Option(False, "--debug", "-d", help="Debug."),
 ):
     """Phase 2: use an LLM to suggest dispositions for pending rows."""
-    if no_llm:
-        dry_run = True
+    dry_run = resolve_dry_run(dry_run, no_llm)
     llm = resolve_provider(PROVIDERS, provider, model, debug=debug, no_llm=no_llm)
     
     personal_context = load_personal_context(context_file)
