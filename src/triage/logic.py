@@ -10,7 +10,7 @@ Four phases:
 import sqlite3
 from datetime import date
 from pathlib import Path
-from typing import Optional
+from typing import Annotated, Optional
 
 import typer
 
@@ -143,7 +143,7 @@ def scan(
 
 @app.command()
 def classify(
-    provider: str = typer.Option("ollama", "--provider", "-p", help="LLM provider."),
+    provider: Annotated[str, typer.Option("--provider", "-p", help="LLM provider.")] = "ollama",
     model: Optional[str] = typer.Option(None, "--model", "-m", help="Model name."),
     db: Path = typer.Option(DB_PATH, help="Path to SQLite DB"),
     context_file: Path = typer.Option(CONTEXT_FILE, "--context-file", "-c", help="Personal context file"),
@@ -227,9 +227,9 @@ def review(
 @app.command()
 def add(
     text: str = typer.Argument(..., help="The thread text to add"),
-    type: str = typer.Option("thought", "--type", "-t", help="Thread type: task or thought"),
+    type: Annotated[str, typer.Option("--type", "-t", help="Thread type: task or thought")] = "thought",
     week: Optional[str] = typer.Option(None, "--week", "-w", help="ISO week to assign to"),
-    source: str = typer.Option("manual", "--source", "-s", help="Source reference"),
+    source: Annotated[str, typer.Option("--source", "-s", help="Source reference")] = "manual",
     db: Path = typer.Option(DB_PATH, help="Path to SQLite DB"),
     dry_run: bool = dry_run_option(),
 ):
