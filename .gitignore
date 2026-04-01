@@ -18,3 +18,12 @@ build/
 dist/
 wheels/
 *.egg-info
+
+# Workspace standard ignores
+*.pyc
+*.pyd
+*.pyo
+.coverage
+.pytest_cache/
+.ruff_cache/
+.venv/
