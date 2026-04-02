@@ -57,53 +57,53 @@ CREATE TABLE IF NOT EXISTS thread_triage (
 
 ```bash
 # Scan the current week
-uv run python src/main.py scan
+uv run thread-triage scan
 
 # Scan a specific ISO week
-uv run python src/main.py scan --week 2026-W11
+uv run thread-triage scan --week 2026-W11
 
 # Scan last 3 days instead of a full week
-uv run python src/main.py scan --days 3
+uv run thread-triage scan --days 3
 
 # Dry-run: see what would be written
-uv run python src/main.py scan --dry-run
+uv run thread-triage scan --dry-run
 
 # Classify pending rows (default: ollama)
-uv run python src/main.py classify
+uv run thread-triage classify
 
 # Classify with Anthropic
-uv run python src/main.py classify --provider anthropic
+uv run thread-triage classify --provider anthropic
 
 # Classify with a specific model
-uv run python src/main.py classify --provider ollama --model llama3.2:3b
+uv run thread-triage classify --provider ollama --model llama3.2:3b
 
 # Classify using a personal context file (strongly recommended — see below)
-uv run python src/main.py classify --provider anthropic --context-file ~/.local-first/thread-triage-context.md
+uv run thread-triage classify --provider anthropic --context-file ~/.local-first/thread-triage-context.md
 
 # Dry-run classification
-uv run python src/main.py classify --dry-run
+uv run thread-triage classify --dry-run
 
 # Skip LLM entirely (for testing CLI args without inference)
-uv run python src/main.py classify --no-llm
+uv run thread-triage classify --no-llm
 
 # Phase 3 helper — see what's pending review and any past-due defers
-uv run python src/main.py review
+uv run thread-triage review
 
 # Filter to a specific week
-uv run python src/main.py review --week 2026-W11
+uv run thread-triage review --week 2026-W11
 
 # Add a new row during Phase 3 review (no raw SQL needed)
-uv run python src/main.py add "An idea I want to capture"
-uv run python src/main.py add "Fix the scanner edge case" --type task --week 2026-W11
+uv run thread-triage add "An idea I want to capture"
+uv run thread-triage add "Fix the scanner edge case" --type task --week 2026-W11
 
 # Act on all reviewed rows (create notes, append tasks)
-uv run python src/main.py act
+uv run thread-triage act
 
 # Preview what act would do without writing anything
-uv run python src/main.py act --dry-run
+uv run thread-triage act --dry-run
 
 # Override where capture notes land
-uv run python src/main.py act --captures-dir "_captures"
+uv run thread-triage act --captures-dir "_captures"
 ```
 
 ## CLI Reference
@@ -238,7 +238,7 @@ Override the default path via env var or `--context-file`:
 export LOCAL_FIRST_THREAD_CONTEXT="~/vaults/my-vault/triage-context.md"
 
 # or per-run:
-uv run python src/main.py classify --context-file ~/my-context.md
+uv run thread-triage classify --context-file ~/my-context.md
 ```
 
 ## Scanner behaviour
