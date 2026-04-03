@@ -25,7 +25,7 @@ from local_first_common.cli import (
 from local_first_common.text import strip_wikilinks
 
 from .config import DB_PATH as DB_PATH, VAULT_PATH as VAULT_PATH, CAPTURES_DIR as CAPTURES_DIR, CONTEXT_FILE as CONTEXT_FILE, _resolve_db_path as _resolve_db_path
-from .db import write_rows as write_rows
+from .db import write_rows as write_rows, init_db as init_db
 from .scanner import find_files_containing_dates as find_files_containing_dates, extract_threads as extract_threads, deduplicate as deduplicate
 from .classifier import run_classify as run_classify
 from .actor import run_act as run_act, append_task as append_task, create_capture_note as create_capture_note, slugify as slugify
@@ -134,9 +134,8 @@ def scan(
             typer.echo(f"    {row.thread_text[:80]}{'...' if len(row.thread_text) > 80 else ''}")
         return
 
-    if not dry_run and not db.exists():
-        typer.echo(f"Error: database not found at {db}", err=True)
-        raise typer.Exit(1)
+    if not dry_run:
+        init_db(db)
 
     inserted = write_rows(db, unique)
     typer.echo(f"Phase 1 complete. New rows: {inserted}, Duplicates skipped: {len(unique) - inserted}")
@@ -159,6 +158,9 @@ def classify(
     personal_context = load_personal_context(context_file)
     goal_context = load_goal_context(VAULT_PATH, date.today())
     
+    if not dry_run:
+        init_db(db)
+
     if verbose and personal_context:
         typer.echo(f"[verbose] Personal context loaded from {context_file}")
     if verbose and goal_context:
@@ -175,33 +177,48 @@ def classify(
 def review(
     db: Path = typer.Option(DB_PATH, help="Path to SQLite DB"),
     week: Optional[str] = typer.Option(None, "--week", "-w", help="Filter to ISO week"),
+    term: Optional[str] = typer.Option(None, "--term", "-t", help="Filter by discovery search term"),
 ):
     """Phase 3 helper: show rows pending human review."""
+    init_db(db)
     conn = sqlite3.connect(db)
-    query = "SELECT id, week, source_file, thread_text FROM thread_triage WHERE human_disposition IS NULL"
+    conn.row_factory = sqlite3.Row
+    
+    query = "SELECT id, week, source_file, thread_text, search_term FROM thread_triage WHERE human_disposition IS NULL"
     params = []
     if week:
         query += " AND week = ?"
         params.append(week)
+    if term:
+        query += " AND search_term LIKE ?"
+        params.append(f"%{term}%")
     
     rows = conn.execute(query, params).fetchall()
     
     # Past-due defers
-    defers = conn.execute(
-        """SELECT id, week, source_file, thread_text, resurface_after
+    defer_query = """SELECT id, week, source_file, thread_text, resurface_after, search_term
            FROM thread_triage
            WHERE human_disposition = 'defer'
              AND executed_at IS NULL
              AND resurface_after IS NOT NULL
-             AND resurface_after <= date('now')
-           ORDER BY resurface_after"""
-    ).fetchall()
+             AND resurface_after <= date('now')"""
+    defer_params = []
+    if week:
+        defer_query += " AND week = ?"
+        defer_params.append(week)
+    if term:
+        defer_query += " AND search_term LIKE ?"
+        defer_params.append(f"%{term}%")
+        
+    defer_query += " ORDER BY resurface_after"
+    defers = conn.execute(defer_query, defer_params).fetchall()
 
     if defers:
         typer.echo(f"\n!  Past-due defers ({len(defers)}) \u2014 ready to resurface:\n")
-        for row_id, wk, src, text, resurface in defers:
-            typer.echo(f"  [{row_id}] due {resurface} | {wk} | {src}")
-            typer.echo(f"    {text[:80]}{'...' if len(text) > 80 else ''}")
+        for r in defers:
+            term_str = f" | term: {r['search_term']}" if r['search_term'] else ""
+            typer.echo(f"  [{r['id']}] due {r['resurface_after']} | {r['week']} | {r['source_file']}{term_str}")
+            typer.echo(f"    {r['thread_text'][:80]}{'...' if len(r['thread_text']) > 80 else ''}")
 
     if not rows:
         if not defers:
@@ -214,11 +231,12 @@ def review(
     table = Table(title="Pending Review")
     table.add_column("ID", justify="right", style="cyan")
     table.add_column("Week", style="magenta")
+    table.add_column("Term", style="yellow")
     table.add_column("Source", style="green")
     table.add_column("Text")
 
-    for r_id, r_week, r_source, r_text in rows:
-        table.add_row(str(r_id), r_week, r_source, r_text[:100])
+    for r in rows:
+        table.add_row(str(r["id"]), r["week"], r["search_term"] or "-", r["source_file"], r["thread_text"][:100])
     
     console.print(table)
     typer.echo(f"\nTotal: {len(rows)} rows pending review.")
@@ -241,6 +259,7 @@ def add(
         typer.echo(f"[dry-run] Would add: [{type}] {text} to week {label}")
         return
 
+    init_db(db)
     inserted = write_rows(db, [row])
     if inserted:
         typer.echo(f"Added manually to week {label}")

@@ -131,6 +131,13 @@ def extract_threads(path: Path, vault: Path) -> list[ThreadRow]:
                     continue
                 if "🔁" in text or "🔄" in text:
                     continue
+                
+                # Discovery metadata extraction: "... | term: #localai"
+                search_term = None
+                term_match = re.search(r"\|\s*term:\s*([^|]+)", text)
+                if term_match:
+                    search_term = term_match.group(1).strip()
+
                 if text and len(text.split()) >= 4:
                     threads.append(ThreadRow(
                         week="",
@@ -138,6 +145,7 @@ def extract_threads(path: Path, vault: Path) -> list[ThreadRow]:
                         source_section=section,
                         thread_text=text,
                         thread_type="thought",
+                        search_term=search_term,
                     ))
 
     return threads

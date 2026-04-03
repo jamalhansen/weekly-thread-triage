@@ -1,6 +1,7 @@
 import sqlite3
 import typer
 from pathlib import Path
+from typing import Optional
 from local_first_common.llm import parse_json_response
 from local_first_common.tracking import register_tool, timed_run
 from .schema import Classification
@@ -15,10 +16,11 @@ def classify_row(
     thread_text: str,
     thread_type: str,
     context: str,
+    search_term: Optional[str] = None,
     system_prompt: str = SYSTEM_PROMPT,
 ) -> Classification:
     """Call LLM to classify a single thread row."""
-    user = build_user_prompt(thread_text, thread_type, context)
+    user = build_user_prompt(thread_text, thread_type, context, search_term=search_term)
     raw = llm.complete(system_prompt, user)
     data = parse_json_response(raw)
     return Classification(**data)
@@ -41,7 +43,7 @@ def run_classify(
     conn = sqlite3.connect(db)
     try:
         pending = conn.execute(
-            """SELECT id, thread_text, thread_type FROM thread_triage
+            """SELECT id, thread_text, thread_type, search_term FROM thread_triage
                WHERE suggested_disposition IS NULL
                ORDER BY created_at"""
         ).fetchall()
@@ -57,10 +59,11 @@ def run_classify(
         processed = 0
 
         with timed_run("weekly-thread-triage", getattr(llm, "model", None)) as _run:
-            for row_id, thread_text, thread_type in pending:
+            for row_id, thread_text, thread_type, search_term in pending:
                 try:
                     result = classify_row(
                         llm, row_id, thread_text, thread_type or "thought", context,
+                        search_term=search_term,
                         system_prompt=effective_prompt,
                     )
                 except Exception as e:

@@ -27,6 +27,7 @@ def make_db(tmp_path: Path) -> Path:
             source_section TEXT,
             thread_text TEXT NOT NULL,
             thread_type TEXT,
+            search_term TEXT,
             suggested_disposition TEXT,
             suggested_action TEXT,
             rationale TEXT,
@@ -41,13 +42,13 @@ def make_db(tmp_path: Path) -> Path:
     return db
 
 
-def _insert_reviewed(conn, thread_text, human_disposition, resurface_after=None):
+def _insert_reviewed(conn, thread_text, human_disposition, resurface_after=None, search_term=None):
     """Insert a row with human_disposition already set (simulates post-Phase-3 state)."""
     conn.execute(
         """INSERT INTO thread_triage
-           (week, source_file, thread_text, thread_type, human_disposition, resurface_after)
-           VALUES (?,?,?,?,?,?)""",
-        ("2026-W11", "a.md", thread_text, "thought", human_disposition, resurface_after),
+           (week, source_file, thread_text, thread_type, human_disposition, resurface_after, search_term)
+           VALUES (?,?,?,?,?,?,?)""",
+        ("2026-W11", "a.md", thread_text, "thought", human_disposition, resurface_after, search_term),
     )
 
 
@@ -141,11 +142,13 @@ class TestScanCommand:
         conn.close()
         assert count > 0
 
-    def test_missing_db_fails(self, tmp_path):
+    def test_missing_db_is_auto_created(self, tmp_path):
+        db_path = tmp_path / "new-auto.db"
         result = runner.invoke(app, [
-            "scan", "--db", str(tmp_path / "missing.db"),
+            "scan", "--db", str(db_path),
         ])
-        assert result.exit_code == 1
+        assert result.exit_code == 0
+        assert db_path.exists()
 
 
 class TestClassifyCommand:
@@ -269,6 +272,27 @@ class TestReviewCommand:
         result = runner.invoke(app, ["review", "--db", str(db)])
         assert result.exit_code == 0, result.output
         assert "No rows pending review" in result.output
+
+    def test_review_filter_by_term(self, tmp_path):
+        db = make_db(tmp_path)
+        conn = sqlite3.connect(db)
+        # One row with term, one without
+        conn.execute(
+            "INSERT INTO thread_triage (week, source_file, thread_text, thread_type, search_term) VALUES (?,?,?,?,?)",
+            ("2026-W11", "a.md", "Python thread", "thought", "python"),
+        )
+        conn.execute(
+            "INSERT INTO thread_triage (week, source_file, thread_text, thread_type, search_term) VALUES (?,?,?,?,?)",
+            ("2026-W11", "b.md", "Generic thread", "thought", "general"),
+        )
+        conn.commit()
+        conn.close()
+
+        # Filter by python
+        result = runner.invoke(app, ["review", "--db", str(db), "--term", "python"])
+        assert result.exit_code == 0
+        assert "Python thread" in result.output
+        assert "Generic thread" not in result.output
 
 
 class TestAddCommand:

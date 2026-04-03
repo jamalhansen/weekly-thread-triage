@@ -11,12 +11,14 @@ class ThreadRow:
         source_section: Optional[str],
         thread_text: str,
         thread_type: str,
+        search_term: Optional[str] = None,
     ):
         self.week = week
         self.source_file = source_file
         self.source_section = source_section
         self.thread_text = thread_text.strip()
         self.thread_type = thread_type
+        self.search_term = search_term
 
     def dedup_key(self) -> str:
         """Normalised text used to detect duplicates across files."""

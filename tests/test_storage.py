@@ -17,6 +17,7 @@ def make_db(tmp_path: Path) -> Path:
             source_section TEXT,
             thread_text TEXT NOT NULL,
             thread_type TEXT,
+            search_term TEXT,
             suggested_disposition TEXT,
             suggested_action TEXT,
             rationale TEXT,

@@ -11,8 +11,10 @@ For each thread, suggest one of these dispositions:
 
 Be concise and decisive. One disposition per thread. One sentence for action and rationale."""
 
-def build_user_prompt(thread_text: str, thread_type: str, context: str) -> str:
+def build_user_prompt(thread_text: str, thread_type: str, context: str, search_term: str | None = None) -> str:
+    discovery = f"Discovery context: Found via search term '{search_term}'" if search_term else ""
     return f"""Thread type: {thread_type}
+{discovery}
 Thread text: {thread_text}
 
 {context}
