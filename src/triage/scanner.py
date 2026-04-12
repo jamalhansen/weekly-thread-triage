@@ -3,7 +3,7 @@ from pathlib import Path
 from datetime import date
 from typing import Optional
 from .schema import ThreadRow
-from .config import THOUGHT_SECTIONS, SCAN_EXTENSIONS, SKIP_DIRS, SKIP_PATHS
+from .config import THOUGHT_SECTIONS, SCAN_EXTENSIONS, SKIP_DIRS, SKIP_PATHS, SCAN_DIRS
 
 # First words that indicate a line is code/SQL, not a natural-language thought
 _SQL_KEYWORDS = {"select", "insert", "update", "delete", "create", "drop", "alter", "with"}
@@ -25,37 +25,46 @@ def _meaningful_word_count(text: str) -> int:
     return len(stripped.split())
 
 def find_files_containing_dates(vault: Path, dates: list[date]) -> dict[Path, set[str]]:
-    """Return a map of Path -> set of matching date strings."""
+    """Return a map of Path -> set of matching date strings.
+
+    Only scans subdirectories listed in SCAN_DIRS (default: Timeline/).
+    Everything else in the vault — project notes, templates, etc. — is ignored.
+    """
     date_strings = {d.strftime("%Y-%m-%d") for d in dates}
     matches: dict[Path, set[str]] = {}
 
-    for path in vault.rglob("*"):
-        if not path.is_file():
-            continue
-        if path.suffix not in SCAN_EXTENSIONS:
-            continue
-        if any(skip in path.parts for skip in SKIP_DIRS):
-            continue
+    scan_roots = [vault / d for d in SCAN_DIRS if (vault / d).is_dir()]
+    if not scan_roots:
+        return matches
 
-        rel = str(path.relative_to(vault))
-        if SKIP_PATHS and any(skip in rel for skip in SKIP_PATHS):
-            continue
+    for root in scan_roots:
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            if path.suffix not in SCAN_EXTENSIONS:
+                continue
+            if any(skip in path.parts for skip in SKIP_DIRS):
+                continue
 
-        try:
-            content = path.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
-            continue
+            rel = str(path.relative_to(vault))
+            if SKIP_PATHS and any(skip in rel for skip in SKIP_PATHS):
+                continue
 
-        # Strip frontmatter before date matching
-        body = content
-        if content.startswith("---"):
-            end_idx = content.find("\n---", 3)
-            if end_idx != -1:
-                body = content[end_idx + 4:]
+            try:
+                content = path.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                continue
 
-        found = {ds for ds in date_strings if ds in body}
-        if found:
-            matches[path] = found
+            # Strip frontmatter before date matching
+            body = content
+            if content.startswith("---"):
+                end_idx = content.find("\n---", 3)
+                if end_idx != -1:
+                    body = content[end_idx + 4:]
+
+            found = {ds for ds in date_strings if ds in body}
+            if found:
+                matches[path] = found
 
     return matches
 

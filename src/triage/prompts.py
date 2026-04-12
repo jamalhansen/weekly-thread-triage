@@ -1,27 +1,43 @@
-DISPOSITION_CHOICES = "capture | task | defer | close | discard"
+BATCH_SYSTEM_PROMPT = """You are a personal productivity assistant reviewing someone's weekly notes.
 
-SYSTEM_PROMPT = """You are a productivity assistant helping classify open threads from a personal knowledge vault.
+Your job: from the list of thoughts below, identify the 3-5 most worth surfacing — ideas or intentions
+the person wrote down that have genuine action potential and might have been forgotten.
 
-For each thread, suggest one of these dispositions:
-- capture: this is a distinct idea worth turning into a tool spec, project note, or reference
-- task: this is concrete work with a clear next action; add it to a task list
-- defer: this is worth revisiting but not actionable this week
-- close: this is already done, or no longer relevant
-- discard: this is noise — captured in the moment, no lasting value
+Exclude:
+- Things already described as completed or done
+- Pure observations with no action potential
+- Vague notes with nothing concrete to act on
+- Noise captured in the moment with no lasting value
 
-Be concise and decisive. One disposition per thread. One sentence for action and rationale."""
+If fewer than 3 items are worth surfacing, return only those. If nothing is worth surfacing, return an empty list.
 
-def build_user_prompt(thread_text: str, thread_type: str, context: str, search_term: str | None = None) -> str:
-    discovery = f"Discovery context: Found via search term '{search_term}'" if search_term else ""
-    return f"""Thread type: {thread_type}
-{discovery}
-Thread text: {thread_text}
+Return JSON only:
+{
+  "items": [
+    {
+      "id": <integer ID from the input>,
+      "suggested_action": "one concrete sentence describing what to do",
+      "rationale": "one sentence explaining why this is worth acting on"
+    }
+  ]
+}"""
 
-{context}
 
-Respond with JSON only:
-{{
-  "suggested_disposition": "{DISPOSITION_CHOICES}",
-  "suggested_action": "one concrete sentence",
-  "rationale": "one sentence explaining why"
-}}"""
+def build_batch_user_prompt(
+    rows: list[dict],
+    personal_context: str = "",
+    goal_context: str = "",
+) -> str:
+    lines = ["Here are the thoughts captured in my notes this week:", ""]
+    for row in rows:
+        lines.append(f"[ID:{row['id']}] {row['thread_text']}")
+
+    if personal_context or goal_context:
+        lines.append("")
+        lines.append("## Context")
+        if personal_context:
+            lines.append(personal_context)
+        if goal_context:
+            lines.append(goal_context)
+
+    return "\n".join(lines)

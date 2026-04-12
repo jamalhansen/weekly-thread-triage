@@ -16,6 +16,13 @@ def _resolve_db_path() -> Path:
 DB_PATH = _resolve_db_path()
 VAULT_PATH = Path(os.environ.get("OBSIDIAN_VAULT_PATH", "")).expanduser() or find_vault_root()
 
+# Vault subdirectories to scan (everything else is ignored)
+SCAN_DIRS: list[str] = [
+    d.strip()
+    for d in os.environ.get("LOCAL_FIRST_SCAN_DIRS", "Timeline").split(":")
+    if d.strip()
+]
+
 # Sections whose content counts as a "thought" rather than a task
 THOUGHT_SECTIONS = {"morning pages", "thoughts", "voice journal", "reflections", "early morning"}
 

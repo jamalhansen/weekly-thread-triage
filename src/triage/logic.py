@@ -28,7 +28,7 @@ from .config import DB_PATH as DB_PATH, VAULT_PATH as VAULT_PATH, CAPTURES_DIR a
 from .db import write_rows as write_rows, init_db as init_db
 from .scanner import find_files_containing_dates as find_files_containing_dates, extract_threads as extract_threads, deduplicate as deduplicate
 from .classifier import run_classify as run_classify
-from .actor import run_act as run_act, append_task as append_task, create_capture_note as create_capture_note, slugify as slugify
+from .actor import run_act as run_act, write_weekly_captures as write_weekly_captures, slugify as slugify
 from .schema import ThreadRow as ThreadRow
 
 def load_personal_context(path: Path) -> str:
@@ -177,70 +177,67 @@ def classify(
 def review(
     db: Path = typer.Option(DB_PATH, help="Path to SQLite DB"),
     week: Optional[str] = typer.Option(None, "--week", "-w", help="Filter to ISO week"),
-    term: Optional[str] = typer.Option(None, "--term", "-t", help="Filter by discovery search term"),
 ):
-    """Phase 3 helper: show rows pending human review."""
+    """Show items queued to surface and any past-due defers."""
     init_db(db)
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
-    
-    query = "SELECT id, week, source_file, thread_text, search_term FROM thread_triage WHERE human_disposition IS NULL"
-    params = []
-    if week:
-        query += " AND week = ?"
-        params.append(week)
-    if term:
-        query += " AND search_term LIKE ?"
-        params.append(f"%{term}%")
-    
-    rows = conn.execute(query, params).fetchall()
-    
+
     # Past-due defers
-    defer_query = """SELECT id, week, source_file, thread_text, resurface_after, search_term
+    defer_query = """SELECT id, week, source_file, thread_text, resurface_after
            FROM thread_triage
            WHERE human_disposition = 'defer'
              AND executed_at IS NULL
              AND resurface_after IS NOT NULL
-             AND resurface_after <= date('now')"""
-    defer_params = []
+             AND resurface_after <= date('now')
+           ORDER BY resurface_after"""
+    defer_params: list = []
     if week:
-        defer_query += " AND week = ?"
+        defer_query = defer_query.replace("ORDER BY", "AND week = ? ORDER BY")
         defer_params.append(week)
-    if term:
-        defer_query += " AND search_term LIKE ?"
-        defer_params.append(f"%{term}%")
-        
-    defer_query += " ORDER BY resurface_after"
     defers = conn.execute(defer_query, defer_params).fetchall()
 
     if defers:
-        typer.echo(f"\n!  Past-due defers ({len(defers)}) \u2014 ready to resurface:\n")
+        typer.echo(f"\n!  Past-due defers ({len(defers)}) — ready to resurface:\n")
         for r in defers:
-            term_str = f" | term: {r['search_term']}" if r['search_term'] else ""
-            typer.echo(f"  [{r['id']}] due {r['resurface_after']} | {r['week']} | {r['source_file']}{term_str}")
+            typer.echo(f"  [{r['id']}] due {r['resurface_after']} | {r['week']} | {r['source_file']}")
             typer.echo(f"    {r['thread_text'][:80]}{'...' if len(r['thread_text']) > 80 else ''}")
 
-    if not rows:
+    # Items selected by classify (will be written by act)
+    surface_query = """SELECT id, week, source_file, thread_text, suggested_action, rationale
+           FROM thread_triage
+           WHERE suggested_disposition = 'surface' AND executed_at IS NULL
+           ORDER BY created_at"""
+    surface_params: list = []
+    if week:
+        surface_query = surface_query.replace("ORDER BY", "AND week = ? ORDER BY")
+        surface_params.append(week)
+    surface_rows = conn.execute(surface_query, surface_params).fetchall()
+
+    if not surface_rows:
         if not defers:
-            typer.echo("No rows pending review.")
+            typer.echo("Nothing to surface this week.")
         return
 
     from rich.console import Console
     from rich.table import Table
     console = Console()
-    table = Table(title="Pending Review")
+    table = Table(title="Queued for Weekly Captures")
     table.add_column("ID", justify="right", style="cyan")
-    table.add_column("Week", style="magenta")
-    table.add_column("Term", style="yellow")
     table.add_column("Source", style="green")
-    table.add_column("Text")
+    table.add_column("Action")
+    table.add_column("Rationale", style="dim")
 
-    for r in rows:
-        table.add_row(str(r["id"]), r["week"], r["search_term"] or "-", r["source_file"], r["thread_text"][:100])
-    
+    for r in surface_rows:
+        table.add_row(
+            str(r["id"]),
+            r["source_file"],
+            (r["suggested_action"] or r["thread_text"])[:80],
+            (r["rationale"] or "")[:60],
+        )
+
     console.print(table)
-    typer.echo(f"\nTotal: {len(rows)} rows pending review.")
-    typer.echo("Use SQLite MCP or direct SQL to set human_disposition.")
+    typer.echo(f"\nTotal: {len(surface_rows)} item(s) queued. Run 'act' to write to today's daily note.")
 
 @app.command()
 def add(
@@ -270,14 +267,15 @@ def add(
 def act(
     db: Path = typer.Option(DB_PATH, help="Path to SQLite DB"),
     vault: Path = typer.Option(VAULT_PATH, help="Path to Obsidian vault"),
-    captures_dir: str = typer.Option(CAPTURES_DIR, "--captures-dir", "-C", help="Vault folder for captures"),
+    template: Optional[Path] = typer.Option(None, "--template", "-T", help="Daily note template path (default: vault/Templates/Daily Note.md)"),
     dry_run: bool = dry_run_option(),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose."),
 ):
-    """Phase 4: execute actions for all reviewed rows."""
+    """Phase 4: write surfaced items to ## Weekly Captures in today's daily note."""
+    resolved_template = template or (vault / "Templates" / "Daily Note.md")
     if dry_run:
         typer.echo("[dry-run] Would execute actions...")
-    acted, deferred, errors = run_act(db, vault, captures_dir, dry_run, verbose)
+    acted, deferred, errors = run_act(db, vault, CAPTURES_DIR, dry_run, verbose, template_path=resolved_template)
     typer.echo(f"Phase 4 complete. Acted: {acted}, Deferred: {deferred}, Errors: {errors}")
 
 if __name__ == "__main__":

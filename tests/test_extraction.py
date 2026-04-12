@@ -276,9 +276,10 @@ class TestFindFilesContainingDates:
         assert note in result
 
     def test_skips_obsidian_dir(self, tmp_path):
+        """Files in .obsidian inside Timeline are not scanned."""
         vault = tmp_path
-        hidden = vault / ".obsidian" / "config.md"
-        hidden.parent.mkdir()
+        hidden = vault / "Timeline" / ".obsidian" / "config.md"
+        hidden.parent.mkdir(parents=True)
         hidden.write_text("2026-03-12")
 
         dates = [date(2026, 3, 12)]
@@ -292,19 +293,21 @@ class TestFindFilesContainingDates:
         assert len(result) == 0
 
     def test_skips_paths_matching_skip_paths(self, tmp_path):
+        """SKIP_PATHS filters files within scanned dirs."""
         vault = tmp_path
-        marketing = vault / "_marketing" / "Starter Pack.md"
-        marketing.parent.mkdir()
-        marketing.write_text("2026-03-12")
-        timeline = vault / "Timeline" / "2026-03-12.md"
-        timeline.parent.mkdir()
-        timeline.write_text("2026-03-12")
+        # Put both files inside Timeline/ so they're in the scan root
+        skipped = vault / "Timeline" / "_skip" / "note.md"
+        skipped.parent.mkdir(parents=True)
+        skipped.write_text("2026-03-12")
+        kept = vault / "Timeline" / "2026-03-12.md"
+        kept.parent.mkdir(parents=True, exist_ok=True)
+        kept.write_text("2026-03-12")
 
         dates = [date(2026, 3, 12)]
-        with patch("triage.config.SKIP_PATHS", {"_marketing"}):
+        with patch("triage.scanner.SKIP_PATHS", {"_skip"}):
             result = find_files_containing_dates(vault, dates)
-        assert marketing not in result
-        assert timeline in result
+        assert skipped not in result
+        assert kept in result
 
     def test_skips_captures_dir(self, tmp_path):
         """Files in _captures are never scanned (triage output must not be re-scanned)."""
@@ -333,6 +336,21 @@ class TestFindFilesContainingDates:
         dates = [date(2026, 3, 12)]
         result = find_files_containing_dates(vault, dates)
         assert spec not in result
+
+    def test_ignores_files_outside_scan_dirs(self, tmp_path):
+        """Files outside Timeline/ (e.g. project notes) are never scanned."""
+        vault = tmp_path
+        project_note = vault / "projects" / "tools" / "_NOTES.md"
+        project_note.parent.mkdir(parents=True)
+        project_note.write_text("[[2026-03-12]] - Some changelog entry 2026-03-12")
+        timeline_note = vault / "Timeline" / "2026-03-12.md"
+        timeline_note.parent.mkdir(parents=True)
+        timeline_note.write_text("Today is 2026-03-12")
+
+        dates = [date(2026, 3, 12)]
+        result = find_files_containing_dates(vault, dates)
+        assert project_note not in result
+        assert timeline_note in result
 
     def test_matches_date_in_body_despite_frontmatter(self, tmp_path):
         """A file with the date in BOTH frontmatter and body IS matched (body takes precedence)."""

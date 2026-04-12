@@ -1,29 +1,12 @@
 import sqlite3
 import typer
 from pathlib import Path
-from typing import Optional
 from local_first_common.llm import parse_json_response
 from local_first_common.tracking import register_tool, timed_run
-from .schema import Classification
-from .prompts import SYSTEM_PROMPT, build_user_prompt
-from .db import build_context_payload
+from .prompts import BATCH_SYSTEM_PROMPT, build_batch_user_prompt
 
 _TOOL = register_tool("weekly-thread-triage")
 
-def classify_row(
-    llm,
-    row_id: int,
-    thread_text: str,
-    thread_type: str,
-    context: str,
-    search_term: Optional[str] = None,
-    system_prompt: str = SYSTEM_PROMPT,
-) -> Classification:
-    """Call LLM to classify a single thread row."""
-    user = build_user_prompt(thread_text, thread_type, context, search_term=search_term)
-    raw = llm.complete(system_prompt, user)
-    data = parse_json_response(raw)
-    return Classification(**data)
 
 def run_classify(
     db: Path,
@@ -33,17 +16,11 @@ def run_classify(
     personal_context: str = "",
     goal_context: str = "",
 ) -> int:
-    """Run Phase 2: classify all pending rows. Returns count processed."""
-    effective_prompt = SYSTEM_PROMPT
-    if personal_context:
-        effective_prompt = f"{SYSTEM_PROMPT}\n\n## Personal Context\n\n{personal_context}"
-    if goal_context:
-        effective_prompt = effective_prompt + "\n\n## Goal Context\n\n" + goal_context
-
+    """Run Phase 2: one batch LLM call selects 3-5 items to surface. Returns count selected."""
     conn = sqlite3.connect(db)
     try:
         pending = conn.execute(
-            """SELECT id, thread_text, thread_type, search_term FROM thread_triage
+            """SELECT id, thread_text, thread_type FROM thread_triage
                WHERE suggested_disposition IS NULL
                ORDER BY created_at"""
         ).fetchall()
@@ -53,45 +30,56 @@ def run_classify(
             return 0
 
         if verbose:
-            typer.echo(f"[verbose] Classifying {len(pending)} pending rows...")
+            typer.echo(f"[verbose] Sending {len(pending)} rows to LLM in one batch call...")
 
-        context = build_context_payload(conn)
-        processed = 0
+        rows = [{"id": r[0], "thread_text": r[1], "thread_type": r[2]} for r in pending]
+
+        system = BATCH_SYSTEM_PROMPT
+        if personal_context:
+            system += f"\n\n## Personal Context\n\n{personal_context}"
+        if goal_context:
+            system += f"\n\n## Goal Context\n\n{goal_context}"
+
+        user = build_batch_user_prompt(rows, personal_context, goal_context)
 
         with timed_run("weekly-thread-triage", getattr(llm, "model", None)) as _run:
-            for row_id, thread_text, thread_type, search_term in pending:
-                try:
-                    result = classify_row(
-                        llm, row_id, thread_text, thread_type or "thought", context,
-                        search_term=search_term,
-                        system_prompt=effective_prompt,
-                    )
-                except Exception as e:
-                    typer.echo(f"  [error] Row {row_id}: {e}", err=True)
-                    continue
+            raw = llm.complete(system, user)
+            data = parse_json_response(raw)
 
-                if dry_run:
-                    typer.echo(f"\n[dry-run] Row {row_id}: {thread_text[:60]}…")
-                    typer.echo(f"  disposition: {result.suggested_disposition}")
-                    typer.echo(f"  action: {result.suggested_action}")
-                    typer.echo(f"  rationale: {result.rationale}")
-                else:
-                    conn.execute(
-                        """UPDATE thread_triage
-                           SET suggested_disposition = ?, suggested_action = ?, rationale = ?
-                           WHERE id = ?""",
-                        (result.suggested_disposition, result.suggested_action, result.rationale, row_id),
-                    )
-                    conn.commit()
-                    if verbose:
-                        typer.echo(f"  Row {row_id}: {result.suggested_disposition} — {result.suggested_action}")
+            selected = data.get("items", [])
+            selected_map = {item["id"]: item for item in selected}
+            selected_ids = set(selected_map.keys())
 
-                processed += 1
+            if dry_run:
+                typer.echo(f"\n[dry-run] Would surface {len(selected_ids)} of {len(pending)} items:")
+                for item in selected:
+                    typer.echo(f"  [ID:{item['id']}] {item.get('suggested_action', '')}")
+                    typer.echo(f"    {item.get('rationale', '')}")
+            else:
+                for row_id, _, _ in pending:
+                    if row_id in selected_ids:
+                        info = selected_map[row_id]
+                        conn.execute(
+                            """UPDATE thread_triage
+                               SET suggested_disposition = 'surface',
+                                   suggested_action = ?,
+                                   rationale = ?
+                               WHERE id = ?""",
+                            (info.get("suggested_action", ""), info.get("rationale", ""), row_id),
+                        )
+                        if verbose:
+                            typer.echo(f"  [surface] ID:{row_id} — {info.get('suggested_action', '')[:70]}")
+                    else:
+                        conn.execute(
+                            "UPDATE thread_triage SET suggested_disposition = 'discard' WHERE id = ?",
+                            (row_id,),
+                        )
+                conn.commit()
 
-            _run.item_count = processed
+            _run.item_count = len(selected_ids)
             _run.input_tokens = getattr(llm, "input_tokens", None) or None
             _run.output_tokens = getattr(llm, "output_tokens", None) or None
 
-        return processed
+        return len(selected_ids)
     finally:
         conn.close()
