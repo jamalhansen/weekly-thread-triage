@@ -42,13 +42,23 @@ def make_db(tmp_path: Path) -> Path:
     return db
 
 
-def _insert_reviewed(conn, thread_text, human_disposition, resurface_after=None, search_term=None):
+def _insert_reviewed(
+    conn, thread_text, human_disposition, resurface_after=None, search_term=None
+):
     """Insert a row with human_disposition already set (simulates post-Phase-3 state)."""
     conn.execute(
         """INSERT INTO thread_triage
            (week, source_file, thread_text, thread_type, human_disposition, resurface_after, search_term)
            VALUES (?,?,?,?,?,?,?)""",
-        ("2026-W11", "a.md", thread_text, "thought", human_disposition, resurface_after, search_term),
+        (
+            "2026-W11",
+            "a.md",
+            thread_text,
+            "thought",
+            human_disposition,
+            resurface_after,
+            search_term,
+        ),
     )
 
 
@@ -62,18 +72,34 @@ class TestActCommand:
             """INSERT INTO thread_triage
                (week, source_file, thread_text, thread_type, suggested_action, rationale, suggested_disposition)
                VALUES (?,?,?,?,?,?,?)""",
-            ("2026-W11", "Timeline/2026-04-01.md", "Great idea about local-first agent design", "thought",
-             "Write a spec for a local-first agent orchestrator", "Key gap in the suite.", "surface"),
+            (
+                "2026-W11",
+                "Timeline/2026-04-01.md",
+                "Great idea about local-first agent design",
+                "thought",
+                "Write a spec for a local-first agent orchestrator",
+                "Key gap in the suite.",
+                "surface",
+            ),
         )
         conn.commit()
         conn.close()
 
         from datetime import date
+
         today = date.today()
         with patch("triage.config.VAULT_PATH", vault):
-            result = runner.invoke(app, [
-                "act", "--db", str(db), "--vault", str(vault), "--verbose",
-            ])
+            result = runner.invoke(
+                app,
+                [
+                    "act",
+                    "--db",
+                    str(db),
+                    "--vault",
+                    str(vault),
+                    "--verbose",
+                ],
+            )
 
         assert result.exit_code == 0, result.output
         assert "Weekly Captures" in result.output or "weekly captures" in result.output
@@ -90,14 +116,23 @@ class TestActCommand:
             """INSERT INTO thread_triage
                (week, source_file, thread_text, thread_type, suggested_action, rationale, suggested_disposition)
                VALUES (?,?,?,?,?,?,?)""",
-            ("2026-W11", "Timeline/2026-04-01.md", "Another idea", "thought",
-             "Write a spec", "Good reason.", "surface"),
+            (
+                "2026-W11",
+                "Timeline/2026-04-01.md",
+                "Another idea",
+                "thought",
+                "Write a spec",
+                "Good reason.",
+                "surface",
+            ),
         )
         conn.commit()
         conn.close()
 
         with patch("triage.config.VAULT_PATH", vault):
-            result = runner.invoke(app, ["act", "--db", str(db), "--vault", str(vault), "--dry-run"])
+            result = runner.invoke(
+                app, ["act", "--db", str(db), "--vault", str(vault), "--dry-run"]
+            )
 
         assert result.exit_code == 0, result.output
         assert "dry-run" in result.output
@@ -113,11 +148,18 @@ class TestScanCommand:
         db = make_db(tmp_path)
 
         with patch("triage.config.VAULT_PATH", vault):
-            result = runner.invoke(app, [
-                "scan", "--week", "2026-W11",
-                "--db", str(db),
-                "--dry-run", "--verbose",
-            ])
+            result = runner.invoke(
+                app,
+                [
+                    "scan",
+                    "--week",
+                    "2026-W11",
+                    "--db",
+                    str(db),
+                    "--dry-run",
+                    "--verbose",
+                ],
+            )
 
         assert result.exit_code == 0, result.output
         assert "dry-run" in result.output
@@ -131,10 +173,16 @@ class TestScanCommand:
         db = make_db(tmp_path)
 
         with patch("triage.config.VAULT_PATH", vault):
-            result = runner.invoke(app, [
-                "scan", "--week", "2026-W11",
-                "--db", str(db),
-            ])
+            result = runner.invoke(
+                app,
+                [
+                    "scan",
+                    "--week",
+                    "2026-W11",
+                    "--db",
+                    str(db),
+                ],
+            )
 
         assert result.exit_code == 0, result.output
         conn = sqlite3.connect(db)
@@ -144,9 +192,14 @@ class TestScanCommand:
 
     def test_missing_db_is_auto_created(self, tmp_path):
         db_path = tmp_path / "new-auto.db"
-        result = runner.invoke(app, [
-            "scan", "--db", str(db_path),
-        ])
+        result = runner.invoke(
+            app,
+            [
+                "scan",
+                "--db",
+                str(db_path),
+            ],
+        )
         assert result.exit_code == 0
         assert db_path.exists()
 
@@ -158,33 +211,49 @@ class TestClassifyCommand:
         conn = sqlite3.connect(db)
         conn.execute(
             "INSERT INTO thread_triage (week, source_file, thread_text, thread_type) VALUES (?,?,?,?)",
-            ("2026-W11", "Timeline/2026-04-01.md", "I should look into Apple Silicon hardware acceleration", "thought"),
+            (
+                "2026-W11",
+                "Timeline/2026-04-01.md",
+                "I should look into Apple Silicon hardware acceleration",
+                "thought",
+            ),
         )
         conn.execute(
             "INSERT INTO thread_triage (week, source_file, thread_text, thread_type) VALUES (?,?,?,?)",
-            ("2026-W11", "Timeline/2026-04-02.md", "Just noise captured in the moment today", "thought"),
+            (
+                "2026-W11",
+                "Timeline/2026-04-02.md",
+                "Just noise captured in the moment today",
+                "thought",
+            ),
         )
         conn.commit()
         rows = conn.execute("SELECT id FROM thread_triage ORDER BY id").fetchall()
         conn.close()
         first_id, _ = rows[0][0], rows[1][0]
 
-        mock_response = json.dumps({
-            "items": [
-                {
-                    "id": first_id,
-                    "suggested_action": "Check whether Pal uses Apple Silicon neural engine.",
-                    "rationale": "Has concrete action potential and was likely forgotten.",
-                }
-            ]
-        })
+        mock_response = json.dumps(
+            {
+                "items": [
+                    {
+                        "id": first_id,
+                        "suggested_action": "Check whether Pal uses Apple Silicon neural engine.",
+                        "rationale": "Has concrete action potential and was likely forgotten.",
+                    }
+                ]
+            }
+        )
 
-        with patch("triage.logic.resolve_provider", return_value=MockProvider(mock_response)):
+        with patch(
+            "triage.logic.resolve_provider", return_value=MockProvider(mock_response)
+        ):
             result = runner.invoke(app, ["classify", "--db", str(db)])
 
         assert result.exit_code == 0, result.output
         conn = sqlite3.connect(db)
-        rows = conn.execute("SELECT id, suggested_disposition FROM thread_triage ORDER BY id").fetchall()
+        rows = conn.execute(
+            "SELECT id, suggested_disposition FROM thread_triage ORDER BY id"
+        ).fetchall()
         conn.close()
         assert rows[0][1] == "surface"
         assert rows[1][1] == "discard"
@@ -194,17 +263,31 @@ class TestClassifyCommand:
         conn = sqlite3.connect(db)
         conn.execute(
             "INSERT INTO thread_triage (week, source_file, thread_text) VALUES (?,?,?)",
-            ("2026-W11", "Timeline/2026-04-01.md", "An interesting idea about personas in the tool suite"),
+            (
+                "2026-W11",
+                "Timeline/2026-04-01.md",
+                "An interesting idea about personas in the tool suite",
+            ),
         )
         conn.commit()
         row_id = conn.execute("SELECT id FROM thread_triage").fetchone()[0]
         conn.close()
 
-        mock_response = json.dumps({
-            "items": [{"id": row_id, "suggested_action": "Build it.", "rationale": "Good idea."}]
-        })
+        mock_response = json.dumps(
+            {
+                "items": [
+                    {
+                        "id": row_id,
+                        "suggested_action": "Build it.",
+                        "rationale": "Good idea.",
+                    }
+                ]
+            }
+        )
 
-        with patch("triage.logic.resolve_provider", return_value=MockProvider(mock_response)):
+        with patch(
+            "triage.logic.resolve_provider", return_value=MockProvider(mock_response)
+        ):
             result = runner.invoke(app, ["classify", "--db", str(db), "--dry-run"])
 
         assert result.exit_code == 0
@@ -219,29 +302,50 @@ class TestClassifyCommand:
         conn = sqlite3.connect(db)
         conn.execute(
             "INSERT INTO thread_triage (week, source_file, thread_text, thread_type) VALUES (?,?,?,?)",
-            ("2026-W11", "Timeline/2026-04-01.md", "Build a read-later queue for kept articles", "thought"),
+            (
+                "2026-W11",
+                "Timeline/2026-04-01.md",
+                "Build a read-later queue for kept articles",
+                "thought",
+            ),
         )
         conn.commit()
         row_id = conn.execute("SELECT id FROM thread_triage").fetchone()[0]
         conn.close()
 
         ctx_file = tmp_path / "context.md"
-        ctx_file.write_text("## Tool Suite\n\n- content-discovery-agent\n- weekly-thread-triage\n")
+        ctx_file.write_text(
+            "## Tool Suite\n\n- content-discovery-agent\n- weekly-thread-triage\n"
+        )
 
         captured_prompts: list[str] = []
 
         class CapturingProvider:
             def complete(self, system: str, user: str) -> str:
                 captured_prompts.append(system)
-                return json.dumps({
-                    "items": [{"id": row_id, "suggested_action": "Write a spec.", "rationale": "Good idea."}]
-                })
+                return json.dumps(
+                    {
+                        "items": [
+                            {
+                                "id": row_id,
+                                "suggested_action": "Write a spec.",
+                                "rationale": "Good idea.",
+                            }
+                        ]
+                    }
+                )
 
         with patch("triage.logic.resolve_provider", return_value=CapturingProvider()):
-            result = runner.invoke(app, [
-                "classify", "--db", str(db),
-                "--context-file", str(ctx_file),
-            ])
+            result = runner.invoke(
+                app,
+                [
+                    "classify",
+                    "--db",
+                    str(db),
+                    "--context-file",
+                    str(ctx_file),
+                ],
+            )
 
         assert result.exit_code == 0, result.output
         assert len(captured_prompts) == 1
@@ -257,8 +361,15 @@ class TestReviewCommand:
             """INSERT INTO thread_triage
                (week, source_file, thread_text, thread_type, suggested_disposition, suggested_action, rationale)
                VALUES (?,?,?,?,?,?,?)""",
-            ("2026-W11", "Timeline/2026-04-01.md", "An idea worth reviewing", "thought",
-             "surface", "Do the thing", "Good reason"),
+            (
+                "2026-W11",
+                "Timeline/2026-04-01.md",
+                "An idea worth reviewing",
+                "thought",
+                "surface",
+                "Do the thing",
+                "Good reason",
+            ),
         )
         conn.commit()
         conn.close()
@@ -266,12 +377,17 @@ class TestReviewCommand:
         result = runner.invoke(app, ["review", "--db", str(db)])
         assert result.exit_code == 0, result.output
         assert "1 item" in result.output
-        assert "An idea worth reviewing" in result.output or "Do the thing" in result.output
+        assert (
+            "An idea worth reviewing" in result.output
+            or "Do the thing" in result.output
+        )
 
     def test_shows_past_due_defers(self, tmp_path):
         db = make_db(tmp_path)
         conn = sqlite3.connect(db)
-        _insert_reviewed(conn, "Should have resurfaced by now", "defer", resurface_after="2020-01-01")
+        _insert_reviewed(
+            conn, "Should have resurfaced by now", "defer", resurface_after="2020-01-01"
+        )
         conn.commit()
         conn.close()
 
@@ -290,13 +406,22 @@ class TestReviewCommand:
 class TestAddCommand:
     def test_adds_row_to_db(self, tmp_path):
         db = make_db(tmp_path)
-        result = runner.invoke(app, [
-            "add", "A brand new idea captured during review",
-            "--db", str(db), "--week", "2026-W11",
-        ])
+        result = runner.invoke(
+            app,
+            [
+                "add",
+                "A brand new idea captured during review",
+                "--db",
+                str(db),
+                "--week",
+                "2026-W11",
+            ],
+        )
         assert result.exit_code == 0, result.output
         conn = sqlite3.connect(db)
-        row = conn.execute("SELECT thread_text, thread_type, source_file FROM thread_triage").fetchone()
+        row = conn.execute(
+            "SELECT thread_text, thread_type, source_file FROM thread_triage"
+        ).fetchone()
         conn.close()
         assert row[0] == "A brand new idea captured during review"
         assert row[1] == "thought"
@@ -304,10 +429,16 @@ class TestAddCommand:
 
     def test_dry_run_does_not_write(self, tmp_path):
         db = make_db(tmp_path)
-        result = runner.invoke(app, [
-            "add", "This should not be saved",
-            "--db", str(db), "--dry-run",
-        ])
+        result = runner.invoke(
+            app,
+            [
+                "add",
+                "This should not be saved",
+                "--db",
+                str(db),
+                "--dry-run",
+            ],
+        )
         assert result.exit_code == 0, result.output
         assert "dry-run" in result.output
         conn = sqlite3.connect(db)
@@ -317,10 +448,19 @@ class TestAddCommand:
 
     def test_respects_type_flag(self, tmp_path):
         db = make_db(tmp_path)
-        runner.invoke(app, [
-            "add", "Do the thing now",
-            "--db", str(db), "--type", "task", "--week", "2026-W11",
-        ])
+        runner.invoke(
+            app,
+            [
+                "add",
+                "Do the thing now",
+                "--db",
+                str(db),
+                "--type",
+                "task",
+                "--week",
+                "2026-W11",
+            ],
+        )
         conn = sqlite3.connect(db)
         row = conn.execute("SELECT thread_type FROM thread_triage").fetchone()
         conn.close()
