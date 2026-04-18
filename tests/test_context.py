@@ -2,7 +2,7 @@
 
 from datetime import date
 
-from triage.logic import load_goal_context, load_personal_context
+from local_first_common.obsidian import load_goal_context, load_personal_context
 
 
 class TestLoadPersonalContext:

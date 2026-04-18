@@ -3,11 +3,11 @@
 from datetime import date
 from unittest.mock import patch
 
+from triage.config import _resolve_db_path
+from triage.actor import slugify
 from triage.logic import (
-    _resolve_db_path,
     dates_for_days,
     dates_for_week,
-    slugify,
     week_label,
 )
 
@@ -57,11 +57,11 @@ class TestDatesForWeek:
 
 class TestDatesForDays:
     def test_returns_n_dates(self):
-        assert len(dates_for_days(7)) == 7
-        assert len(dates_for_days(1)) == 1
+        assert len(dates_for_days(date.today(), 7)) == 7
+        assert len(dates_for_days(date.today(), 1)) == 1
 
     def test_last_date_is_today(self):
-        dates = dates_for_days(3)
+        dates = dates_for_days(date.today(), 3)
         assert dates[-1] == date.today()
 
 

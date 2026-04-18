@@ -2,10 +2,8 @@ import sqlite3
 import typer
 from pathlib import Path
 from local_first_common.llm import parse_json_response
-from local_first_common.tracking import register_tool, timed_run
+from local_first_common.tracking import timed_run
 from .prompts import BATCH_SYSTEM_PROMPT, build_batch_user_prompt
-
-_TOOL = register_tool("weekly-thread-triage")
 
 
 def run_classify(

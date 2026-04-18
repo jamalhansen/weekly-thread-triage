@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "local-first-common[anthropic]",
     "requests>=2.32.5",
+    "toml>=0.10.2",
     "typer>=0.24.1",
 ]
 
@@ -24,7 +25,7 @@ packages = ["src/triage"]
 pythonpath = ["src"]
 
 [tool.uv.sources]
-local-first-common = { git = "https://github.com/jamalhansen/local-first-common.git", rev = "main" }
+local-first-common = {path = "../local-first-common", editable = true}
 
 [dependency-groups]
 dev = [

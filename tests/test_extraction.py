@@ -4,8 +4,8 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
-from triage.logic import (
-    ThreadRow,
+from triage.schema import ThreadRow
+from triage.scanner import (
     deduplicate,
     extract_threads,
     find_files_containing_dates,
