@@ -37,26 +37,60 @@ def init_db(db_path: Path) -> None:
                 pass  # already exists
 
 def write_rows(db_path: Path, rows: List[ThreadRow]) -> int:
-    """Insert rows into thread_triage, skipping duplicates."""
+    """Sync rows into thread_triage for the scanned files.
+    
+    Implements a 'Sync' approach:
+    1. For every (week, source_file) present in 'rows', delete existing rows where human_disposition IS NULL
+       AND the text is NOT in the current scan (this cleans up 'edit ghosts').
+    2. Insert new rows if they don't already exist in the database (this handles re-scans).
+    """
+    if not rows:
+        return 0
+
     inserted = 0
-    with db.get_db_cursor(db_path) as cur:
-        if cur is None:
-            return 0
+    path = Path(db_path).expanduser()
+    conn = sqlite3.connect(str(path))
+    try:
+        cur = conn.cursor()
+        
+        # 1. Group rows by (week, source_file) to manage deletes per-file
+        files_to_sync = {}
         for row in rows:
-            # Same-week dedup
+            key = (row.week, row.source_file)
+            if key not in files_to_sync:
+                files_to_sync[key] = set()
+            files_to_sync[key].add(row.thread_text)
+        
+        # 2. For each file/week, delete orphaned un-dispositioned rows
+        for (week, source_file), current_texts in files_to_sync.items():
+            # Find all IDs for this file/week that are un-dispositioned
             cur.execute(
-                "SELECT id FROM thread_triage WHERE week = ? AND thread_text = ?",
-                (row.week, row.thread_text),
+                "SELECT id, thread_text FROM thread_triage WHERE week = ? AND source_file = ? AND human_disposition IS NULL",
+                (week, source_file)
+            )
+            existing = cur.fetchall()
+            for db_id, db_text in existing:
+                if db_text not in current_texts:
+                    # This item was edited or deleted in the source note
+                    cur.execute("DELETE FROM thread_triage WHERE id = ?", (db_id,))
+
+        # 3. Insert new items
+        for row in rows:
+            # Same-week check: skip if identical text exists in this file/week
+            cur.execute(
+                "SELECT id FROM thread_triage WHERE week = ? AND source_file = ? AND thread_text = ?",
+                (row.week, row.source_file, row.thread_text),
             )
             if cur.fetchone():
                 continue
 
-            # Cross-week dedup
+            # Cross-week check: skip if this text was ALREADY actioned (not 'defer') in another week
+            # This respects the existing behavior where 'defer' items resurface.
             cur.execute(
-                """SELECT id FROM thread_triage
-                   WHERE thread_text = ? AND human_disposition IS NOT NULL
-                     AND human_disposition != 'defer' AND week != ?""",
-                (row.thread_text, row.week),
+                """SELECT id FROM thread_triage 
+                   WHERE thread_text = ? AND human_disposition IS NOT NULL 
+                   AND human_disposition != 'defer'""",
+                (row.thread_text,)
             )
             if cur.fetchone():
                 continue
@@ -68,7 +102,10 @@ def write_rows(db_path: Path, rows: List[ThreadRow]) -> int:
                 (row.week, row.source_file, row.source_section, row.thread_text, row.thread_type, row.search_term),
             )
             inserted += 1
-        cur.connection.commit()
+            
+        conn.commit()
+    finally:
+        conn.close()
     return inserted
 
 def build_context_payload(conn: sqlite3.Connection) -> str:
