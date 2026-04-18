@@ -388,3 +388,28 @@ class TestDeduplicate:
             ThreadRow("2026-W11", "b.md", None, "Fix the  scanner", "task"),
         ]
         assert len(deduplicate(rows)) == 1
+
+def test_high_signal_filtering():
+    """Verify that short high-signal thoughts are kept and long noise is discarded."""
+    from triage.scanner import extract_threads
+    from pathlib import Path
+    import tempfile
+    
+    content = """
+## Thoughts
+- Buy BTC
+- I think that maybe I should do something
+- ? Why is SQLite so fast
+- Sometimes I feel like it is what it is
+"""
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.md') as tmp:
+        tmp.write(content)
+        tmp.flush()
+        # Mock vault path as the temp dir
+        threads = extract_threads(Path(tmp.name), Path(tmp.name).parent)
+        
+        texts = [t.thread_text for t in threads]
+        assert "Buy BTC" in texts           # High-signal verb
+        assert "? Why is SQLite so fast" in texts # Question
+        assert "I think that maybe I should do something" not in texts # Noise starter
+        assert "Sometimes I feel like it is what it is" not in texts   # Noise starter

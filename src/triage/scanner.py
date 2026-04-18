@@ -1,4 +1,5 @@
 import re
+from local_first_common.text import is_high_signal
 from pathlib import Path
 from datetime import date
 from typing import Optional
@@ -18,18 +19,9 @@ _TASK_METADATA_RE = re.compile(
     r"|#\w+"                     # tags
 )
 
-def _meaningful_word_count(text: str) -> int:
-    """Count words remaining after stripping Obsidian task metadata and emojis."""
-    stripped = _TASK_METADATA_RE.sub(" ", text)
-    stripped = re.sub(r"[^\w\s]", " ", stripped)  # emojis, remaining punctuation
-    return len(stripped.split())
 
 def find_files_containing_dates(vault: Path, dates: list[date]) -> dict[Path, set[str]]:
-    """Return a map of Path -> set of matching date strings.
-
-    Only scans subdirectories listed in SCAN_DIRS (default: Timeline/).
-    Everything else in the vault — project notes, templates, etc. — is ignored.
-    """
+    """Return a map of Path -> set of matching date strings."""
     date_strings = {d.strftime("%Y-%m-%d") for d in dates}
     matches: dict[Path, set[str]] = {}
 
@@ -55,7 +47,6 @@ def find_files_containing_dates(vault: Path, dates: list[date]) -> dict[Path, se
             except Exception:
                 continue
 
-            # Strip frontmatter before date matching
             body = content
             if content.startswith("---"):
                 end_idx = content.find("\n---", 3)
@@ -87,7 +78,6 @@ def extract_threads(path: Path, vault: Path) -> list[ThreadRow]:
     threads: list[ThreadRow] = []
     rel = str(path.relative_to(vault))
 
-    # Strip frontmatter
     start = 0
     if lines and lines[0].strip() == "---":
         for i, line in enumerate(lines[1:], 1):
@@ -97,32 +87,29 @@ def extract_threads(path: Path, vault: Path) -> list[ThreadRow]:
 
     for i, line in enumerate(lines[start:], start):
         section = current_section(lines, i)
-        section_lower = section.lower() if section else ""
+        section_lower = section.lower().strip() if section else ""
         in_thought_section = any(s in section_lower for s in THOUGHT_SECTIONS)
 
-        # Unwrap Obsidian callout block content in thought sections
         effective_line = line
         if in_thought_section and re.match(r"^>", line):
             if re.match(r"^>\s*\[!", line):
                 continue
             effective_line = re.sub(r"^>\s?", "", line)
 
-        # Skip completed [x] and cancelled [-] task markers everywhere
         if re.match(r"^\s*[-*]\s+\[[-xX]\]", effective_line):
             continue
 
-        # Unchecked tasks — only from thought sections
         task_match = re.match(r"^\s*-\s+\[ \]\s+(.+)", effective_line)
         if task_match:
             if in_thought_section:
                 text = task_match.group(1).strip()
                 if "🔁" in text or "🔄" in text:
                     continue
-                if _meaningful_word_count(text) < 4:
+                if not is_high_signal(text):
                     continue
                 if text:
                     threads.append(ThreadRow(
-                        week="",  # filled in by caller
+                        week="",
                         source_file=rel,
                         source_section=section,
                         thread_text=text,
@@ -130,7 +117,6 @@ def extract_threads(path: Path, vault: Path) -> list[ThreadRow]:
                     ))
             continue
 
-        # Thoughts — non-empty bullet lines in thought sections
         if in_thought_section:
             thought_match = re.match(r"^\s*[-*∙•·]\s+(.+)", effective_line)
             if thought_match:
@@ -141,13 +127,12 @@ def extract_threads(path: Path, vault: Path) -> list[ThreadRow]:
                 if "🔁" in text or "🔄" in text:
                     continue
                 
-                # Discovery metadata extraction: "... | term: #localai"
                 search_term = None
                 term_match = re.search(r"\|\s*term:\s*([^|]+)", text)
                 if term_match:
                     search_term = term_match.group(1).strip()
 
-                if text and len(text.split()) >= 4:
+                if text and is_high_signal(text):
                     threads.append(ThreadRow(
                         week="",
                         source_file=rel,
