@@ -8,8 +8,25 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 
 from local_first_common.testing import MockProvider
+from triage.logic import TriageError, ScanError, ActorError, app
 
-from triage.logic import app
+
+class TestTypedErrors:
+    def test_triage_error_hierarchy(self):
+        err = TriageError("base")
+        assert isinstance(err, Exception)
+        assert "base" in str(err)
+
+    def test_scan_error_is_triage_error(self):
+        err = ScanError("scan failed")
+        assert isinstance(err, TriageError)
+        assert "scan failed" in str(err)
+
+    def test_actor_error_is_triage_error(self):
+        err = ActorError("act failed")
+        assert isinstance(err, TriageError)
+        assert "act failed" in str(err)
+
 
 runner = CliRunner()
 

@@ -50,6 +50,19 @@ DEFAULTS = {
 }
 _TOOL = register_tool(TOOL_NAME)
 
+
+class TriageError(Exception):
+    """Base typed error for weekly-thread-triage."""
+
+
+class ScanError(TriageError):
+    """Raised when vault scanning fails."""
+
+
+class ActorError(TriageError):
+    """Raised when the act phase fails."""
+
+
 app = typer.Typer(help="Weekly triage of thoughts and tasks.")
 
 
