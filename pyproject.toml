@@ -25,7 +25,7 @@ packages = ["src/triage"]
 pythonpath = ["src"]
 
 [tool.uv.sources]
-local-first-common = {path = "../local-first-common", editable = true}
+local-first-common = { git = "https://github.com/jamalhansen/local-first-common.git", branch = "main" }
 
 [dependency-groups]
 dev = [

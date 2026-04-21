@@ -434,7 +434,7 @@ sdist = { url = "https://files.pythonhosted.org/packages/0e/72/a3add0e4eec4eb9e2
 [[package]]
 name = "local-first-common"
 version = "0.1.0"
-source = { editable = "../local-first-common" }
+source = { git = "https://github.com/jamalhansen/local-first-common.git?branch=main#6f40208150133090b012ad765e8248f0b6e8a669" }
 dependencies = [
     { name = "beautifulsoup4" },
     { name = "duckdb" },
@@ -451,37 +451,6 @@ dependencies = [
 [package.optional-dependencies]
 anthropic = [
     { name = "anthropic" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "anthropic", marker = "extra == 'all-providers'", specifier = ">=0.84.0" },
-    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.84.0" },
-    { name = "beautifulsoup4", specifier = ">=4.12.0" },
-    { name = "duckdb", specifier = ">=1.5.0" },
-    { name = "google-genai", marker = "extra == 'all-providers'", specifier = ">=1.65.0" },
-    { name = "google-genai", marker = "extra == 'gemini'", specifier = ">=1.65.0" },
-    { name = "groq", marker = "extra == 'all-providers'", specifier = ">=1.0.0" },
-    { name = "groq", marker = "extra == 'groq'", specifier = ">=1.0.0" },
-    { name = "httpx", specifier = ">=0.28.1" },
-    { name = "langdetect", specifier = ">=1.0.9" },
-    { name = "openai", marker = "extra == 'all-providers'", specifier = ">=2.24.0" },
-    { name = "openai", marker = "extra == 'deepseek'", specifier = ">=2.24.0" },
-    { name = "pydantic", specifier = ">=2.12.5" },
-    { name = "pydantic-ai", marker = "extra == 'all-providers'", specifier = ">=0.0.14" },
-    { name = "pydantic-ai", marker = "extra == 'pydantic-ai'", specifier = ">=0.0.14" },
-    { name = "python-frontmatter", specifier = ">=1.1.0" },
-    { name = "pyyaml", specifier = ">=6.0.3" },
-    { name = "requests", specifier = ">=2.32.5" },
-    { name = "toml", specifier = ">=0.10.2" },
-    { name = "typer", specifier = ">=0.24.1" },
-]
-provides-extras = ["anthropic", "groq", "deepseek", "gemini", "pydantic-ai", "all-providers"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=9.0.2" },
-    { name = "pytest-cov", specifier = ">=7.0.0" },
 ]
 
 [[package]]
@@ -843,7 +812,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "local-first-common", extras = ["anthropic"], editable = "../local-first-common" },
+    { name = "local-first-common", extras = ["anthropic"], git = "https://github.com/jamalhansen/local-first-common.git?branch=main" },
     { name = "requests", specifier = ">=2.32.5" },
     { name = "toml", specifier = ">=0.10.2" },
     { name = "typer", specifier = ">=0.24.1" },
