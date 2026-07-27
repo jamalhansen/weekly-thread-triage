@@ -28,3 +28,4 @@ wheels/
 .pytest_cache/
 .ruff_cache/
 .venv/
+_NOTES.md
