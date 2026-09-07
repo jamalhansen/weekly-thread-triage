@@ -134,7 +134,12 @@ def classify(
     actual_provider = get_setting(
         TOOL_NAME, "provider", cli_val=provider, default="ollama"
     )
-    actual_model = get_setting(TOOL_NAME, "model", cli_val=model)
+    config_provider = get_setting(TOOL_NAME, "provider", default="ollama")
+    actual_model = (
+        get_setting(TOOL_NAME, "model", cli_val=model)
+        if (model is not None or actual_provider == config_provider)
+        else None
+    )
 
     llm = resolve_provider(None, actual_provider, actual_model, debug=debug)
 

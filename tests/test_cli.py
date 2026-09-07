@@ -222,6 +222,34 @@ class TestScanCommand:
 
 
 class TestClassifyCommand:
+    def test_switching_provider_does_not_carry_over_other_providers_model(
+        self, tmp_path, monkeypatch
+    ):
+        """A saved config model for one provider must not leak into a CLI --provider switch."""
+        import local_first_common.config as config_module
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        monkeypatch.setattr(config_module, "CONFIG_DIR", config_dir)
+        (config_dir / "weekly-thread-triage.toml").write_text(
+            'provider = "ollama"\nmodel = "llama3.2"\n'
+        )
+
+        db = make_db(tmp_path)
+
+        with patch(
+            "triage.logic.resolve_provider",
+            return_value=MockProvider(json.dumps({"items": []})),
+        ) as mock_resolve:
+            result = runner.invoke(
+                app, ["classify", "--db", str(db), "--provider", "anthropic"]
+            )
+
+        assert result.exit_code == 0, result.output
+        _providers, actual_provider, actual_model = mock_resolve.call_args[0]
+        assert actual_provider == "anthropic"
+        assert actual_model is None  # not ollama's "llama3.2"
+
     def test_classifies_pending_rows_in_batch(self, tmp_path):
         """Classify makes one LLM call and marks selected rows as 'surface'."""
         db = make_db(tmp_path)
