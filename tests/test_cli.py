@@ -510,3 +510,24 @@ class TestAddCommand:
         row = conn.execute("SELECT thread_type FROM thread_triage").fetchone()
         conn.close()
         assert row[0] == "task"
+
+    def test_scan_and_review_json(self, tmp_path):
+        db = make_db(tmp_path)
+        # test scan --json --dry-run
+        res_scan = runner.invoke(app, ["scan", "--db", str(db), "--dry-run", "--json"])
+        assert res_scan.exit_code == 0
+        assert '"dry_run": true' in res_scan.stdout
+
+        # insert surfaced row
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "INSERT INTO thread_triage (week, source_file, source_section, thread_text, thread_type, suggested_action, rationale, suggested_disposition) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ("2026-W11", "note.md", "sec", "Surfaced thread", "thought", "action", "rationale", "surface"),
+        )
+        conn.commit()
+        conn.close()
+
+        res_rev = runner.invoke(app, ["review", "--db", str(db), "--json"])
+        assert res_rev.exit_code == 0
+        assert '"Surfaced thread"' in res_rev.stdout
+

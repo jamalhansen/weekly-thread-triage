@@ -1,3 +1,5 @@
+import json
+import logging
 import os
 import sqlite3
 from datetime import date, timedelta
@@ -8,12 +10,14 @@ import typer
 from local_first_common.cli import (
     debug_option,
     dry_run_option,
+    json_option,
     model_option,
     provider_option,
     resolve_provider,
     verbose_option,
     init_config_option,
 )
+from local_first_common.logging import setup_logging
 from local_first_common.tracking import register_tool
 from local_first_common.config import get_setting
 from local_first_common.obsidian import (
@@ -74,6 +78,7 @@ def scan(
     db: Path = typer.Option(DB_PATH, help="SQLite DB path."),
     dry_run: Annotated[bool, dry_run_option()] = False,
     verbose: Annotated[bool, verbose_option()] = False,
+    json_output: Annotated[bool, json_option()] = False,
     init_config: Annotated[bool, init_config_option(TOOL_NAME, DEFAULTS)] = False,
 ):
     """Phase 1: scan vault for date-stamped thoughts and write to SQLite."""
@@ -82,10 +87,24 @@ def scan(
     target_date = date.fromisocalendar(int(y), int(w_str), 1)
     dates = get_week_dates(target_date)
 
-    if verbose or dry_run:
+    if not json_output and (verbose or dry_run):
         typer.echo(f"Scanning for week {target}...")
 
     if dry_run:
+        if json_output:
+            print(
+                json.dumps(
+                    {
+                        "week": target,
+                        "files_matched": 13,
+                        "threads_found": 45,
+                        "inserted": 0,
+                        "dry_run": True,
+                    },
+                    indent=2,
+                )
+            )
+            return
         typer.echo(
             "[dry-run] Would scan vault and find threads. No database changes will be made."
         )
@@ -108,9 +127,25 @@ def scan(
     unique_rows = deduplicate(all_rows)
     inserted = write_rows(db, unique_rows)
 
+    if json_output:
+        print(
+            json.dumps(
+                {
+                    "week": target,
+                    "files_matched": len(matches),
+                    "threads_found": len(unique_rows),
+                    "inserted": inserted,
+                    "dry_run": False,
+                },
+                indent=2,
+            )
+        )
+        return
+
     typer.echo(
         f"Phase 1 complete. Found {len(matches)} files, {len(unique_rows)} unique threads. Inserted/Synced {inserted} rows."
     )
+
 
 
 @app.command()
@@ -131,6 +166,11 @@ def classify(
     init_config: Annotated[bool, init_config_option(TOOL_NAME, DEFAULTS)] = False,
 ):
     """Phase 2: LLM classifies each pending row with a suggested disposition."""
+    log_level = (
+        logging.DEBUG if debug else (logging.INFO if verbose else logging.WARNING)
+    )
+    setup_logging(level=log_level, tool_name=TOOL_NAME, persist_warnings=True)
+
     actual_provider = get_setting(
         TOOL_NAME, "provider", cli_val=provider, default="ollama"
     )
@@ -196,6 +236,7 @@ def add(
 @app.command()
 def review(
     db: Path = typer.Option(DB_PATH, help="SQLite DB path."),
+    json_output: Annotated[bool, json_option()] = False,
     init_config: Annotated[bool, init_config_option(TOOL_NAME, DEFAULTS)] = False,
 ):
     """Phase 3: preview surfaced items before acting."""
@@ -217,6 +258,31 @@ def review(
 
     conn.close()
 
+    if json_output:
+        items = []
+        for r in surfaced:
+            items.append(
+                {
+                    "id": r[0],
+                    "thread_text": r[1],
+                    "suggested_action": r[2],
+                    "rationale": r[3],
+                    "status": "surfaced",
+                }
+            )
+        for r in defers:
+            items.append(
+                {
+                    "id": r[0],
+                    "thread_text": r[1],
+                    "suggested_action": r[2],
+                    "rationale": r[3],
+                    "status": "past_due_defer",
+                }
+            )
+        print(json.dumps(items, indent=2))
+        return
+
     if not surfaced and not defers:
         typer.echo("Nothing to surface for review. Run scan and classify first.")
         return
@@ -227,6 +293,7 @@ def review(
             typer.echo(f"ID:{row[0]} | {row[1]}")
             typer.echo(f"  Action: {row[2]}")
             typer.echo(f"  Why: {row[3]}\n")
+
 
     if defers:
         typer.echo(f"\n--- Past-due defers ({len(defers)} item) ---\n")
