@@ -1,4 +1,4 @@
-from triage.logic import app
+from triage.cli import app
 
 if __name__ == "__main__":
     app()

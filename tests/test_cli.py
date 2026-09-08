@@ -8,7 +8,7 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 
 from local_first_common.testing import MockProvider
-from triage.logic import TriageError, ScanError, ActorError, app
+from triage.cli import TriageError, ScanError, ActorError, app
 
 
 class TestTypedErrors:
@@ -238,7 +238,7 @@ class TestClassifyCommand:
         db = make_db(tmp_path)
 
         with patch(
-            "triage.logic.resolve_provider",
+            "triage.cli.resolve_provider",
             return_value=MockProvider(json.dumps({"items": []})),
         ) as mock_resolve:
             result = runner.invoke(
@@ -290,7 +290,7 @@ class TestClassifyCommand:
         )
 
         with patch(
-            "triage.logic.resolve_provider", return_value=MockProvider(mock_response)
+            "triage.cli.resolve_provider", return_value=MockProvider(mock_response)
         ):
             result = runner.invoke(app, ["classify", "--db", str(db)])
 
@@ -331,7 +331,7 @@ class TestClassifyCommand:
         )
 
         with patch(
-            "triage.logic.resolve_provider", return_value=MockProvider(mock_response)
+            "triage.cli.resolve_provider", return_value=MockProvider(mock_response)
         ):
             result = runner.invoke(app, ["classify", "--db", str(db), "--dry-run"])
 
@@ -380,7 +380,7 @@ class TestClassifyCommand:
                     }
                 )
 
-        with patch("triage.logic.resolve_provider", return_value=CapturingProvider()):
+        with patch("triage.cli.resolve_provider", return_value=CapturingProvider()):
             result = runner.invoke(
                 app,
                 [

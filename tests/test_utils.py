@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from triage.config import _resolve_db_path
 from triage.actor import slugify
-from triage.logic import (
+from triage.cli import (
     dates_for_days,
     dates_for_week,
     week_label,

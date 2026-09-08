@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
-thread-triage = "triage.logic:app"
+thread-triage = "triage.cli:app"
 
 [build-system]
 requires = ["hatchling"]
