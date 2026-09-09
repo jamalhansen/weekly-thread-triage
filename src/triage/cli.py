@@ -50,7 +50,7 @@ def dates_for_days(end_date: date, count: int) -> list[date]:
 TOOL_NAME = "weekly-thread-triage"
 DEFAULTS = {
     "provider": "ollama",
-    "model": "llama3",
+    "model": "llama3.2:3b",
 }
 _TOOL = register_tool(TOOL_NAME)
 
