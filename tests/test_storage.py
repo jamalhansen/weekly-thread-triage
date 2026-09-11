@@ -3,8 +3,8 @@
 import sqlite3
 from pathlib import Path
 
-from triage.schema import ThreadRow
 from triage.db import write_rows
+from triage.schema import ThreadRow
 
 
 def make_db(tmp_path: Path) -> Path:

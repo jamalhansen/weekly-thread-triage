@@ -5,10 +5,10 @@ import sqlite3
 from pathlib import Path
 from unittest.mock import patch
 
+from local_first_common.testing import MockProvider
 from typer.testing import CliRunner
 
-from local_first_common.testing import MockProvider
-from triage.cli import TriageError, ScanError, ActorError, app
+from triage.cli import ActorError, ScanError, TriageError, app
 
 
 class TestTypedErrors:
@@ -102,9 +102,9 @@ class TestActCommand:
         conn.commit()
         conn.close()
 
-        from datetime import date
+        from datetime import datetime
 
-        today = date.today()
+        today = datetime.now().astimezone().date()
         with patch("triage.config.VAULT_PATH", vault):
             result = runner.invoke(
                 app,

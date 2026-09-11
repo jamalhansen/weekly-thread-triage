@@ -4,12 +4,12 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
-from triage.schema import ThreadRow
 from triage.scanner import (
     deduplicate,
     extract_threads,
     find_files_containing_dates,
 )
+from triage.schema import ThreadRow
 
 FIXTURE_NOTE = Path(__file__).parent / "fixtures" / "sample_daily_note.md"
 
@@ -391,9 +391,10 @@ class TestDeduplicate:
 
 def test_high_signal_filtering():
     """Verify that short high-signal thoughts are kept and long noise is discarded."""
-    from triage.scanner import extract_threads
-    from pathlib import Path
     import tempfile
+    from pathlib import Path
+
+    from triage.scanner import extract_threads
     
     content = """
 ## Thoughts

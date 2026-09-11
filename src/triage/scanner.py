@@ -1,10 +1,11 @@
 import re
-from local_first_common.text import is_high_signal
-from pathlib import Path
 from datetime import date
-from typing import Optional
+from pathlib import Path
+
+from local_first_common.text import is_high_signal
+
+from .config import SCAN_DIRS, SCAN_EXTENSIONS, SKIP_DIRS, SKIP_PATHS, THOUGHT_SECTIONS
 from .schema import ThreadRow
-from .config import THOUGHT_SECTIONS, SCAN_EXTENSIONS, SKIP_DIRS, SKIP_PATHS, SCAN_DIRS
 
 # First words that indicate a line is code/SQL, not a natural-language thought
 _SQL_KEYWORDS = {"select", "insert", "update", "delete", "create", "drop", "alter", "with"}
@@ -44,7 +45,8 @@ def find_files_containing_dates(vault: Path, dates: list[date]) -> dict[Path, se
 
             try:
                 content = path.read_text(encoding="utf-8", errors="ignore")
-            except Exception:
+            except Exception as e:  # noqa: BLE001 - one unreadable file shouldn't stop scanning the rest of the vault
+                print(f"  [skipped] {path.name}: {e}")
                 continue
 
             body = content
@@ -59,7 +61,7 @@ def find_files_containing_dates(vault: Path, dates: list[date]) -> dict[Path, se
 
     return matches
 
-def current_section(lines: list[str], line_idx: int) -> Optional[str]:
+def current_section(lines: list[str], line_idx: int) -> str | None:
     """Walk backwards from line_idx to find the most recent ## heading."""
     for i in range(line_idx - 1, -1, -1):
         m = re.match(r"^#{1,3}\s+(.+)", lines[i])
@@ -71,7 +73,7 @@ def extract_threads(path: Path, vault: Path) -> list[ThreadRow]:
     """Extract tasks, thoughts, and ideas from a single file."""
     try:
         content = path.read_text(encoding="utf-8", errors="ignore")
-    except Exception:
+    except Exception:  # noqa: BLE001 - a hand-edited note can fail to read in many ways; treat as no threads rather than crash the scan
         return []
 
     lines = content.splitlines()

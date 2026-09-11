@@ -1,8 +1,9 @@
 import re
 import sqlite3
-import typer
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
+
+import typer
 
 
 def slugify(text: str, max_words: int = 8) -> str:
@@ -108,7 +109,7 @@ def run_act(
             ]
             try:
                 note_path = write_weekly_captures(
-                    items, vault, date.today(), dry_run, template_path
+                    items, vault, datetime.now().astimezone().date(), dry_run, template_path
                 )
                 typer.echo(f"  [weekly captures] {len(surface_rows)} item(s) → {note_path.name}")
                 if not dry_run:
@@ -118,7 +119,7 @@ def run_act(
                             (r[0],),
                         )
                 acted += len(surface_rows)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - one bad batch shouldn't stop the act phase; report and keep going
                 typer.echo(f"  [error] writing weekly captures: {e}", err=True)
                 errors += len(surface_rows)
 
@@ -154,7 +155,7 @@ def run_act(
                     )
                 acted += 1
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - one bad row shouldn't stop acting on the rest
                 typer.echo(f"  [error] Row {row_id}: {e}", err=True)
                 errors += 1
 

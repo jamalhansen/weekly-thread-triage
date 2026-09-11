@@ -1,11 +1,10 @@
 """Tests for write_weekly_captures and run_act."""
 
 import sqlite3
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
-from triage.actor import write_weekly_captures, run_act
-
+from triage.actor import run_act, write_weekly_captures
 
 SAMPLE_TEMPLATE = """\
 ---
@@ -51,7 +50,7 @@ def make_db(tmp_path: Path) -> Path:
 class TestWriteWeeklyCaptures:
     def test_appends_section_to_existing_note(self, tmp_path):
         vault = tmp_path / "vault"
-        today = date.today()
+        today = date(2026, 6, 1)
         note = vault / "Timeline" / f"{today.isoformat()}.md"
         note.parent.mkdir(parents=True)
         note.write_text("# Today\n\n## Thoughts\n\n## Actions\n")
@@ -68,7 +67,7 @@ class TestWriteWeeklyCaptures:
 
     def test_creates_note_from_template_when_missing(self, tmp_path):
         vault = tmp_path / "vault"
-        today = date.today()
+        today = date(2026, 6, 1)
         template_path = vault / "Templates" / "Daily Note.md"
         template_path.parent.mkdir(parents=True)
         template_path.write_text(SAMPLE_TEMPLATE)
@@ -83,7 +82,7 @@ class TestWriteWeeklyCaptures:
 
     def test_creates_note_without_template_when_template_missing(self, tmp_path):
         vault = tmp_path / "vault"
-        today = date.today()
+        today = date(2026, 6, 1)
 
         items = [{"thread_text": "An idea", "source_file": "Timeline/2026-04-01.md", "suggested_action": "Do the thing"}]
         path = write_weekly_captures(items, vault, today, dry_run=False, template_path=None)
@@ -93,7 +92,7 @@ class TestWriteWeeklyCaptures:
 
     def test_source_ref_uses_filename_date(self, tmp_path):
         vault = tmp_path / "vault"
-        today = date.today()
+        today = date(2026, 6, 1)
         note = vault / "Timeline" / f"{today.isoformat()}.md"
         note.parent.mkdir(parents=True)
         note.write_text("# Today\n")
@@ -104,14 +103,14 @@ class TestWriteWeeklyCaptures:
 
     def test_dry_run_does_not_write(self, tmp_path):
         vault = tmp_path / "vault"
-        today = date.today()
+        today = date(2026, 6, 1)
         items = [{"thread_text": "Idea", "source_file": "Timeline/2026-04-01.md", "suggested_action": "Do it"}]
         path = write_weekly_captures(items, vault, today, dry_run=True)
         assert not path.exists()
 
     def test_multiple_items_all_appear(self, tmp_path):
         vault = tmp_path / "vault"
-        today = date.today()
+        today = date(2026, 6, 1)
         note = vault / "Timeline" / f"{today.isoformat()}.md"
         note.parent.mkdir(parents=True)
         note.write_text("# Today\n")
@@ -146,7 +145,7 @@ class TestRunAct:
     def test_writes_weekly_captures_section(self, tmp_path):
         db = make_db(tmp_path)
         vault = tmp_path / "vault"
-        today = date.today()
+        today = datetime.now().astimezone().date()  # run_act() below computes its own "today" internally; must match
         (vault / "Timeline").mkdir(parents=True)
         conn = sqlite3.connect(db)
         self._insert_surface(conn, "An interesting idea about local-first tools",
@@ -154,7 +153,7 @@ class TestRunAct:
         conn.commit()
         conn.close()
 
-        acted, deferred, errors = run_act(db, vault, "_captures", dry_run=False, verbose=False)
+        acted, _deferred, errors = run_act(db, vault, "_captures", dry_run=False, verbose=False)
         assert acted == 1
         assert errors == 0
 
@@ -187,7 +186,7 @@ class TestRunAct:
         conn.commit()
         conn.close()
 
-        acted, deferred, errors = run_act(db, vault, "_captures", dry_run=False, verbose=False)
+        _acted, deferred, _errors = run_act(db, vault, "_captures", dry_run=False, verbose=False)
         assert deferred == 1
         conn = sqlite3.connect(db)
         row = conn.execute("SELECT resurface_after FROM thread_triage").fetchone()

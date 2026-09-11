@@ -2,38 +2,43 @@ import json
 import logging
 import os
 import sqlite3
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from local_first_common.cli import (
     debug_option,
     dry_run_option,
+    init_config_option,
     json_option,
     model_option,
     provider_option,
     resolve_provider,
     verbose_option,
-    init_config_option,
 )
-from local_first_common.logging import setup_logging
-from local_first_common.tracking import register_tool
 from local_first_common.config import get_setting
+from local_first_common.logging import setup_logging
 from local_first_common.obsidian import (
+    get_week_dates,
     load_goal_context,
     load_personal_context,
-    get_week_dates,
 )
+from local_first_common.tracking import register_tool
+
+from .actor import run_act
 from .classifier import run_classify
+from .config import CAPTURES_DIR, CONTEXT_FILE, DB_PATH, VAULT_PATH
 from .db import init_db, write_rows
 from .scanner import (
-    find_files_containing_dates as find_files_containing_dates,
-    extract_threads as extract_threads,
-    deduplicate as deduplicate,
+    deduplicate as deduplicate,  # noqa: PLC0414 - explicit re-export, relied on by tests importing from cli, not scanner
 )
-from .actor import run_act
-from .config import DB_PATH, VAULT_PATH, CAPTURES_DIR, CONTEXT_FILE
+from .scanner import (
+    extract_threads as extract_threads,  # noqa: PLC0414 - explicit re-export, relied on by tests importing from cli, not scanner
+)
+from .scanner import (
+    find_files_containing_dates as find_files_containing_dates,  # noqa: PLC0414 - explicit re-export, relied on by tests importing from cli, not scanner
+)
 
 # For test compatibility
 dates_for_week = get_week_dates
@@ -72,17 +77,17 @@ app = typer.Typer(help="Weekly triage of thoughts and tasks.")
 
 @app.command()
 def scan(
-    week: Optional[str] = typer.Option(
+    week: str | None = typer.Option(
         None, help="ISO week (YYYY-WNN). Defaults to current."
     ),
-    db: Path = typer.Option(DB_PATH, help="SQLite DB path."),
+    db: Annotated[Path, typer.Option(help="SQLite DB path.")] = DB_PATH,
     dry_run: Annotated[bool, dry_run_option()] = False,
     verbose: Annotated[bool, verbose_option()] = False,
     json_output: Annotated[bool, json_option()] = False,
     init_config: Annotated[bool, init_config_option(TOOL_NAME, DEFAULTS)] = False,
 ):
     """Phase 1: scan vault for date-stamped thoughts and write to SQLite."""
-    target = week or date.today().strftime("%Y-W%V")
+    target = week or datetime.now().astimezone().date().strftime("%Y-W%V")
     y, w_str = target.split("-W")
     target_date = date.fromisocalendar(int(y), int(w_str), 1)
     dates = get_week_dates(target_date)
@@ -150,15 +155,15 @@ def scan(
 
 @app.command()
 def classify(
-    db: Path = typer.Option(DB_PATH, help="SQLite DB path."),
+    db: Annotated[Path, typer.Option(help="SQLite DB path.")] = DB_PATH,
     provider: Annotated[str, provider_option()] = os.environ.get(
         "MODEL_PROVIDER", "ollama"
     ),
-    model: Annotated[Optional[str], model_option()] = None,
+    model: Annotated[str | None, model_option()] = None,
     personal_context: bool = typer.Option(True, help="Load personal context file."),
-    context_file: Optional[Path] = typer.Option(
-        None, "--context-file", help="Custom personal context file."
-    ),
+    context_file: Annotated[
+        Path | None, typer.Option("--context-file", help="Custom personal context file.")
+    ] = None,
     goals: bool = typer.Option(True, help="Load goal context from vault."),
     dry_run: Annotated[bool, dry_run_option()] = False,
     verbose: Annotated[bool, verbose_option()] = False,
@@ -201,17 +206,15 @@ def classify(
 @app.command()
 def add(
     text: str = typer.Argument(..., help="Thread text to capture."),
-    week: Optional[str] = typer.Option(None, help="ISO week (YYYY-WNN)."),
+    week: str | None = typer.Option(None, help="ISO week (YYYY-WNN)."),
     thread_type: Annotated[
         str, typer.Option("--type", help="Thread type (thought/task).")
     ] = "thought",
-    db: Path = typer.Option(DB_PATH, help="SQLite DB path."),
+    db: Annotated[Path, typer.Option(help="SQLite DB path.")] = DB_PATH,
     dry_run: Annotated[bool, dry_run_option()] = False,
 ):
     """Manually add a thread to the triage database."""
-    from datetime import date
-
-    target_week = week or date.today().strftime("%Y-W%V")
+    target_week = week or datetime.now().astimezone().date().strftime("%Y-W%V")
 
     if dry_run:
         typer.echo(f"[dry-run] Would add to {target_week}: {text} ({thread_type})")
@@ -235,7 +238,7 @@ def add(
 
 @app.command()
 def review(
-    db: Path = typer.Option(DB_PATH, help="SQLite DB path."),
+    db: Annotated[Path, typer.Option(help="SQLite DB path.")] = DB_PATH,
     json_output: Annotated[bool, json_option()] = False,
     init_config: Annotated[bool, init_config_option(TOOL_NAME, DEFAULTS)] = False,
 ):
@@ -248,9 +251,7 @@ def review(
     ).fetchall()
 
     # 2. Check for past-due defers
-    from datetime import date
-
-    today = date.today().isoformat()
+    today = datetime.now().astimezone().date().isoformat()
     defers = conn.execute(
         "SELECT id, thread_text, suggested_action, rationale FROM thread_triage WHERE human_disposition = 'defer' AND resurface_after <= ?",
         (today,),
@@ -309,9 +310,11 @@ def review(
 
 @app.command()
 def act(
-    db: Path = typer.Option(DB_PATH, help="SQLite DB path."),
-    vault: Path = typer.Option(VAULT_PATH, help="Vault root path."),
-    template: Optional[Path] = typer.Option(None, help="Custom daily note template."),
+    db: Annotated[Path, typer.Option(help="SQLite DB path.")] = DB_PATH,
+    vault: Annotated[Path, typer.Option(help="Vault root path.")] = VAULT_PATH,
+    template: Annotated[
+        Path | None, typer.Option(help="Custom daily note template.")
+    ] = None,
     dry_run: Annotated[bool, dry_run_option()] = False,
     verbose: Annotated[bool, verbose_option()] = False,
     init_config: Annotated[bool, init_config_option(TOOL_NAME, DEFAULTS)] = False,

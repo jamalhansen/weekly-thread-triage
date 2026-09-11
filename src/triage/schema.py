@@ -1,6 +1,7 @@
-from pydantic import BaseModel
-from typing import Optional
 import re
+
+from pydantic import BaseModel
+
 
 class ThreadRow:
     """A candidate thread extracted from a vault file."""
@@ -8,10 +9,10 @@ class ThreadRow:
         self,
         week: str,
         source_file: str,
-        source_section: Optional[str],
+        source_section: str | None,
         thread_text: str,
         thread_type: str,
-        search_term: Optional[str] = None,
+        search_term: str | None = None,
     ):
         self.week = week
         self.source_file = source_file

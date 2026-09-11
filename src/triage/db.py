@@ -1,7 +1,8 @@
 import sqlite3
 from pathlib import Path
-from typing import List
+
 from local_first_common import db
+
 from .schema import ThreadRow
 
 _CREATE_TABLE = """
@@ -36,7 +37,7 @@ def init_db(db_path: Path) -> None:
             except sqlite3.OperationalError:
                 pass  # already exists
 
-def write_rows(db_path: Path, rows: List[ThreadRow]) -> int:
+def write_rows(db_path: Path, rows: list[ThreadRow]) -> int:
     """Sync rows into thread_triage for the scanned files.
     
     Implements a 'Sync' approach:

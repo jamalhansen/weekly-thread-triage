@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+
 from local_first_common.obsidian import find_vault_root
 
 # DB path resolution
