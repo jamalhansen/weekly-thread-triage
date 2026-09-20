@@ -186,7 +186,7 @@ def classify(
         else None
     )
 
-    llm = resolve_provider(None, actual_provider, actual_model, debug=debug)
+    llm = resolve_provider(None, actual_provider, actual_model, debug=debug, tool_name=TOOL_NAME)
 
     context = ""
     resolved_context_file = context_file or CONTEXT_FILE
