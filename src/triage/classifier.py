@@ -3,7 +3,6 @@ from pathlib import Path
 
 import typer
 from local_first_common.llm import parse_json_response
-from local_first_common.tracking import timed_run
 
 from .prompts import BATCH_SYSTEM_PROMPT, build_batch_user_prompt
 
@@ -42,43 +41,39 @@ def run_classify(
 
         user = build_batch_user_prompt(rows, personal_context, goal_context)
 
-        with timed_run("weekly-thread-triage", getattr(llm, "model", None)) as _run:
-            raw = llm.complete(system, user)
-            data = parse_json_response(raw)
+        llm.item_count = len(rows)
+        raw = llm.complete(system, user)
+        data = parse_json_response(raw)
 
-            selected = data.get("items", [])
-            selected_map = {item["id"]: item for item in selected}
-            selected_ids = set(selected_map.keys())
+        selected = data.get("items", [])
+        selected_map = {item["id"]: item for item in selected}
+        selected_ids = set(selected_map.keys())
 
-            if dry_run:
-                typer.echo(f"\n[dry-run] Would surface {len(selected_ids)} of {len(pending)} items:")
-                for item in selected:
-                    typer.echo(f"  [ID:{item['id']}] {item.get('suggested_action', '')}")
-                    typer.echo(f"    {item.get('rationale', '')}")
-            else:
-                for row_id, _, _ in pending:
-                    if row_id in selected_ids:
-                        info = selected_map[row_id]
-                        conn.execute(
-                            """UPDATE thread_triage
-                               SET suggested_disposition = 'surface',
-                                   suggested_action = ?,
-                                   rationale = ?
-                               WHERE id = ?""",
-                            (info.get("suggested_action", ""), info.get("rationale", ""), row_id),
-                        )
-                        if verbose:
-                            typer.echo(f"  [surface] ID:{row_id} — {info.get('suggested_action', '')[:70]}")
-                    else:
-                        conn.execute(
-                            "UPDATE thread_triage SET suggested_disposition = 'discard' WHERE id = ?",
-                            (row_id,),
-                        )
-                conn.commit()
-
-            _run.item_count = len(selected_ids)
-            _run.input_tokens = getattr(llm, "input_tokens", None) or None
-            _run.output_tokens = getattr(llm, "output_tokens", None) or None
+        if dry_run:
+            typer.echo(f"\n[dry-run] Would surface {len(selected_ids)} of {len(pending)} items:")
+            for item in selected:
+                typer.echo(f"  [ID:{item['id']}] {item.get('suggested_action', '')}")
+                typer.echo(f"    {item.get('rationale', '')}")
+        else:
+            for row_id, _, _ in pending:
+                if row_id in selected_ids:
+                    info = selected_map[row_id]
+                    conn.execute(
+                        """UPDATE thread_triage
+                           SET suggested_disposition = 'surface',
+                               suggested_action = ?,
+                               rationale = ?
+                           WHERE id = ?""",
+                        (info.get("suggested_action", ""), info.get("rationale", ""), row_id),
+                    )
+                    if verbose:
+                        typer.echo(f"  [surface] ID:{row_id} — {info.get('suggested_action', '')[:70]}")
+                else:
+                    conn.execute(
+                        "UPDATE thread_triage SET suggested_disposition = 'discard' WHERE id = ?",
+                        (row_id,),
+                    )
+            conn.commit()
 
         return len(selected_ids)
     finally:
