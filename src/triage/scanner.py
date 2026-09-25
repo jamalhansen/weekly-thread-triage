@@ -2,6 +2,7 @@ import re
 from datetime import date
 from pathlib import Path
 
+from local_first_common.obsidian import parse_frontmatter_text
 from local_first_common.text import is_high_signal
 
 from .config import SCAN_DIRS, SCAN_EXTENSIONS, SKIP_DIRS, SKIP_PATHS, THOUGHT_SECTIONS
@@ -49,11 +50,7 @@ def find_files_containing_dates(vault: Path, dates: list[date]) -> dict[Path, se
                 print(f"  [skipped] {path.name}: {e}")
                 continue
 
-            body = content
-            if content.startswith("---"):
-                end_idx = content.find("\n---", 3)
-                if end_idx != -1:
-                    body = content[end_idx + 4:]
+            body = parse_frontmatter_text(content)[1]
 
             found = {ds for ds in date_strings if ds in body}
             if found:
