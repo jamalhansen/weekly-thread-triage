@@ -47,7 +47,7 @@ def write_weekly_captures(
     Creates the note from template if it doesn't exist.
     Each item dict must have: thread_text, source_file, suggested_action (optional).
     """
-    note_path = vault / "Timeline" / f"{note_date.isoformat()}.md"
+    note_path = vault / "timeline" / f"{note_date.isoformat()}.md"
 
     lines = ["## Weekly Captures", ""]
     for item in items:

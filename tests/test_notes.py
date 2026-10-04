@@ -51,7 +51,7 @@ class TestWriteWeeklyCaptures:
     def test_appends_section_to_existing_note(self, tmp_path):
         vault = tmp_path / "vault"
         today = date(2026, 6, 1)
-        note = vault / "Timeline" / f"{today.isoformat()}.md"
+        note = vault / "timeline" / f"{today.isoformat()}.md"
         note.parent.mkdir(parents=True)
         note.write_text("# Today\n\n## Thoughts\n\n## Actions\n")
 
@@ -93,7 +93,7 @@ class TestWriteWeeklyCaptures:
     def test_source_ref_uses_filename_date(self, tmp_path):
         vault = tmp_path / "vault"
         today = date(2026, 6, 1)
-        note = vault / "Timeline" / f"{today.isoformat()}.md"
+        note = vault / "timeline" / f"{today.isoformat()}.md"
         note.parent.mkdir(parents=True)
         note.write_text("# Today\n")
 
@@ -111,7 +111,7 @@ class TestWriteWeeklyCaptures:
     def test_multiple_items_all_appear(self, tmp_path):
         vault = tmp_path / "vault"
         today = date(2026, 6, 1)
-        note = vault / "Timeline" / f"{today.isoformat()}.md"
+        note = vault / "timeline" / f"{today.isoformat()}.md"
         note.parent.mkdir(parents=True)
         note.write_text("# Today\n")
 
@@ -146,7 +146,7 @@ class TestRunAct:
         db = make_db(tmp_path)
         vault = tmp_path / "vault"
         today = datetime.now().astimezone().date()  # run_act() below computes its own "today" internally; must match
-        (vault / "Timeline").mkdir(parents=True)
+        (vault / "timeline").mkdir(parents=True)
         conn = sqlite3.connect(db)
         self._insert_surface(conn, "An interesting idea about local-first tools",
                              suggested_action="Write a spec for a local-first tool registry")
@@ -157,7 +157,7 @@ class TestRunAct:
         assert acted == 1
         assert errors == 0
 
-        note = vault / "Timeline" / f"{today.isoformat()}.md"
+        note = vault / "timeline" / f"{today.isoformat()}.md"
         assert note.exists()
         assert "## Weekly Captures" in note.read_text()
         assert "local-first tool registry" in note.read_text()
@@ -165,7 +165,7 @@ class TestRunAct:
     def test_stamps_executed_at_after_act(self, tmp_path):
         db = make_db(tmp_path)
         vault = tmp_path / "vault"
-        (vault / "Timeline").mkdir(parents=True)
+        (vault / "timeline").mkdir(parents=True)
         conn = sqlite3.connect(db)
         self._insert_surface(conn, "An idea to act on")
         conn.commit()
@@ -213,7 +213,7 @@ class TestRunAct:
     def test_dry_run_writes_nothing(self, tmp_path):
         db = make_db(tmp_path)
         vault = tmp_path / "vault"
-        (vault / "Timeline").mkdir(parents=True)
+        (vault / "timeline").mkdir(parents=True)
         conn = sqlite3.connect(db)
         self._insert_surface(conn, "An idea")
         conn.commit()

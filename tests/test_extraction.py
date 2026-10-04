@@ -18,7 +18,7 @@ class TestExtractThreads:
     def test_extracts_unchecked_tasks(self, tmp_path):
         """Tasks in thought sections (Morning Pages) are extracted."""
         vault = tmp_path
-        note = vault / "Timeline" / "2026-03-12.md"
+        note = vault / "timeline" / "2026-03-12.md"
         note.parent.mkdir(parents=True)
         note.write_text(FIXTURE_NOTE.read_text())
 
@@ -267,7 +267,7 @@ class TestExtractThreads:
 class TestFindFilesContainingDates:
     def test_finds_files_with_date_string(self, tmp_path):
         vault = tmp_path
-        note = vault / "Timeline" / "2026-03-12.md"
+        note = vault / "timeline" / "2026-03-12.md"
         note.parent.mkdir()
         note.write_text("Created: 2026-03-12\n\nSome content here.")
 
@@ -278,7 +278,7 @@ class TestFindFilesContainingDates:
     def test_skips_obsidian_dir(self, tmp_path):
         """Files in .obsidian inside Timeline are not scanned."""
         vault = tmp_path
-        hidden = vault / "Timeline" / ".obsidian" / "config.md"
+        hidden = vault / "timeline" / ".obsidian" / "config.md"
         hidden.parent.mkdir(parents=True)
         hidden.write_text("2026-03-12")
 
@@ -296,10 +296,10 @@ class TestFindFilesContainingDates:
         """SKIP_PATHS filters files within scanned dirs."""
         vault = tmp_path
         # Put both files inside Timeline/ so they're in the scan root
-        skipped = vault / "Timeline" / "_skip" / "note.md"
+        skipped = vault / "timeline" / "_skip" / "note.md"
         skipped.parent.mkdir(parents=True)
         skipped.write_text("2026-03-12")
-        kept = vault / "Timeline" / "2026-03-12.md"
+        kept = vault / "timeline" / "2026-03-12.md"
         kept.parent.mkdir(parents=True, exist_ok=True)
         kept.write_text("2026-03-12")
 
@@ -343,7 +343,7 @@ class TestFindFilesContainingDates:
         project_note = vault / "projects" / "tools" / "_NOTES.md"
         project_note.parent.mkdir(parents=True)
         project_note.write_text("[[2026-03-12]] - Some changelog entry 2026-03-12")
-        timeline_note = vault / "Timeline" / "2026-03-12.md"
+        timeline_note = vault / "timeline" / "2026-03-12.md"
         timeline_note.parent.mkdir(parents=True)
         timeline_note.write_text("Today is 2026-03-12")
 
@@ -355,7 +355,7 @@ class TestFindFilesContainingDates:
     def test_matches_date_in_body_despite_frontmatter(self, tmp_path):
         """A file with the date in BOTH frontmatter and body IS matched (body takes precedence)."""
         vault = tmp_path
-        note = vault / "Timeline" / "2026-03-12.md"
+        note = vault / "timeline" / "2026-03-12.md"
         note.parent.mkdir()
         note.write_text(
             "---\nCreated: 2026-03-12\n---\n\n"

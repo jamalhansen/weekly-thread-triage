@@ -83,7 +83,7 @@ class TestActCommand:
     def test_act_writes_weekly_captures(self, tmp_path):
         db = make_db(tmp_path)
         vault = tmp_path / "vault"
-        (vault / "Timeline").mkdir(parents=True)
+        (vault / "timeline").mkdir(parents=True)
         conn = sqlite3.connect(db)
         conn.execute(
             """INSERT INTO thread_triage
@@ -105,7 +105,7 @@ class TestActCommand:
         from datetime import datetime
 
         today = datetime.now().astimezone().date()
-        with patch("triage.config.VAULT_PATH", vault):
+        with patch("triage.config.VAULT_PATH", vault), patch("triage.cli.VAULT_PATH", vault):
             result = runner.invoke(
                 app,
                 [
@@ -120,14 +120,14 @@ class TestActCommand:
 
         assert result.exit_code == 0, result.output
         assert "Weekly Captures" in result.output or "weekly captures" in result.output
-        note = vault / "Timeline" / f"{today.isoformat()}.md"
+        note = vault / "timeline" / f"{today.isoformat()}.md"
         assert note.exists()
         assert "## Weekly Captures" in note.read_text()
 
     def test_act_dry_run(self, tmp_path):
         db = make_db(tmp_path)
         vault = tmp_path / "vault"
-        (vault / "Timeline").mkdir(parents=True)
+        (vault / "timeline").mkdir(parents=True)
         conn = sqlite3.connect(db)
         conn.execute(
             """INSERT INTO thread_triage
@@ -146,7 +146,7 @@ class TestActCommand:
         conn.commit()
         conn.close()
 
-        with patch("triage.config.VAULT_PATH", vault):
+        with patch("triage.config.VAULT_PATH", vault), patch("triage.cli.VAULT_PATH", vault):
             result = runner.invoke(
                 app, ["act", "--db", str(db), "--vault", str(vault), "--dry-run"]
             )
@@ -159,12 +159,12 @@ class TestScanCommand:
     def test_dry_run_shows_threads(self, tmp_path):
         vault = tmp_path / "vault"
         vault.mkdir()
-        note = vault / "Timeline" / "2026-03-12.md"
+        note = vault / "timeline" / "2026-03-12.md"
         note.parent.mkdir()
         note.write_text(FIXTURE_NOTE.read_text())
         db = make_db(tmp_path)
 
-        with patch("triage.config.VAULT_PATH", vault):
+        with patch("triage.config.VAULT_PATH", vault), patch("triage.cli.VAULT_PATH", vault):
             result = runner.invoke(
                 app,
                 [
@@ -184,12 +184,12 @@ class TestScanCommand:
     def test_scan_writes_to_db(self, tmp_path):
         vault = tmp_path / "vault"
         vault.mkdir()
-        note = vault / "Timeline" / "2026-03-12.md"
+        note = vault / "timeline" / "2026-03-12.md"
         note.parent.mkdir()
         note.write_text(FIXTURE_NOTE.read_text())
         db = make_db(tmp_path)
 
-        with patch("triage.config.VAULT_PATH", vault):
+        with patch("triage.config.VAULT_PATH", vault), patch("triage.cli.VAULT_PATH", vault):
             result = runner.invoke(
                 app,
                 [

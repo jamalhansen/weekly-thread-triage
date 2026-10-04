@@ -20,7 +20,7 @@ VAULT_PATH = Path(os.environ.get("OBSIDIAN_VAULT_PATH", "")).expanduser() or fin
 # Vault subdirectories to scan (everything else is ignored)
 SCAN_DIRS: list[str] = [
     d.strip()
-    for d in os.environ.get("LOCAL_FIRST_SCAN_DIRS", "Timeline").split(":")
+    for d in os.environ.get("LOCAL_FIRST_SCAN_DIRS", "timeline").split(":")
     if d.strip()
 ]
 
