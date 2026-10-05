@@ -24,10 +24,11 @@ CREATE TABLE IF NOT EXISTS thread_triage (
 );
 """
 
+
 def init_db(db_path: Path) -> None:
     """Initialize the thread_triage table and handle migrations."""
     db.init_db(db_path, _CREATE_TABLE)
-    
+
     # Migration: add search_term if missing
     with db.get_db_cursor(db_path) as cur:
         if cur:
@@ -37,9 +38,10 @@ def init_db(db_path: Path) -> None:
             except sqlite3.OperationalError:
                 pass  # already exists
 
+
 def write_rows(db_path: Path, rows: list[ThreadRow]) -> int:
     """Sync rows into thread_triage for the scanned files.
-    
+
     Implements a 'Sync' approach:
     1. For every (week, source_file) present in 'rows', delete existing rows where human_disposition IS NULL
        AND the text is NOT in the current scan (this cleans up 'edit ghosts').
@@ -53,7 +55,7 @@ def write_rows(db_path: Path, rows: list[ThreadRow]) -> int:
     conn = sqlite3.connect(str(path))
     try:
         cur = conn.cursor()
-        
+
         # 1. Group rows by (week, source_file) to manage deletes per-file
         files_to_sync = {}
         for row in rows:
@@ -61,13 +63,13 @@ def write_rows(db_path: Path, rows: list[ThreadRow]) -> int:
             if key not in files_to_sync:
                 files_to_sync[key] = set()
             files_to_sync[key].add(row.thread_text)
-        
+
         # 2. For each file/week, delete orphaned un-dispositioned rows
         for (week, source_file), current_texts in files_to_sync.items():
             # Find all IDs for this file/week that are un-dispositioned
             cur.execute(
                 "SELECT id, thread_text FROM thread_triage WHERE week = ? AND source_file = ? AND human_disposition IS NULL",
-                (week, source_file)
+                (week, source_file),
             )
             existing = cur.fetchall()
             for db_id, db_text in existing:
@@ -91,7 +93,7 @@ def write_rows(db_path: Path, rows: list[ThreadRow]) -> int:
                 """SELECT id FROM thread_triage 
                    WHERE thread_text = ? AND human_disposition IS NOT NULL 
                    AND human_disposition != 'defer'""",
-                (row.thread_text,)
+                (row.thread_text,),
             )
             if cur.fetchone():
                 continue
@@ -103,11 +105,12 @@ def write_rows(db_path: Path, rows: list[ThreadRow]) -> int:
                 (row.week, row.source_file, row.source_section, row.thread_text, row.thread_type, row.search_term),
             )
             inserted += 1
-            
+
         conn.commit()
     finally:
         conn.close()
     return inserted
+
 
 def build_context_payload(conn: sqlite3.Connection) -> str:
     """Build a compact context string to ground the LLM's classifications."""

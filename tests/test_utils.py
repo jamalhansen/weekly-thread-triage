@@ -30,8 +30,7 @@ class TestResolveDbPath:
         monkeypatch.delenv("LOCAL_FIRST_DB", raising=False)
         fake_sync_db = tmp_path / "nonexistent" / "thread-triage.db"
         fake_legacy = tmp_path / "local-first.db"
-        with patch("triage.config._SYNC_DB", fake_sync_db), \
-             patch("triage.config._LEGACY_DB", fake_legacy):
+        with patch("triage.config._SYNC_DB", fake_sync_db), patch("triage.config._LEGACY_DB", fake_legacy):
             assert _resolve_db_path() == fake_legacy
 
 

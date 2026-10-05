@@ -56,7 +56,11 @@ class TestWriteWeeklyCaptures:
         note.write_text("# Today\n\n## Thoughts\n\n## Actions\n")
 
         items = [
-            {"thread_text": "I should look into Apple Silicon", "source_file": "Timeline/2026-04-01.md", "suggested_action": "Check whether Pal uses Apple Silicon hardware acceleration"},
+            {
+                "thread_text": "I should look into Apple Silicon",
+                "source_file": "Timeline/2026-04-01.md",
+                "suggested_action": "Check whether Pal uses Apple Silicon hardware acceleration",
+            },
         ]
         path = write_weekly_captures(items, vault, today, dry_run=False)
 
@@ -72,19 +76,23 @@ class TestWriteWeeklyCaptures:
         template_path.parent.mkdir(parents=True)
         template_path.write_text(SAMPLE_TEMPLATE)
 
-        items = [{"thread_text": "An idea", "source_file": "Timeline/2026-04-01.md", "suggested_action": "Do the thing"}]
+        items = [
+            {"thread_text": "An idea", "source_file": "Timeline/2026-04-01.md", "suggested_action": "Do the thing"}
+        ]
         path = write_weekly_captures(items, vault, today, dry_run=False, template_path=template_path)
 
         assert path.exists()
         content = path.read_text()
-        assert today.isoformat() in content          # template var substituted
+        assert today.isoformat() in content  # template var substituted
         assert "## Weekly Captures" in content
 
     def test_creates_note_without_template_when_template_missing(self, tmp_path):
         vault = tmp_path / "vault"
         today = date(2026, 6, 1)
 
-        items = [{"thread_text": "An idea", "source_file": "Timeline/2026-04-01.md", "suggested_action": "Do the thing"}]
+        items = [
+            {"thread_text": "An idea", "source_file": "Timeline/2026-04-01.md", "suggested_action": "Do the thing"}
+        ]
         path = write_weekly_captures(items, vault, today, dry_run=False, template_path=None)
 
         assert path.exists()
@@ -148,8 +156,11 @@ class TestRunAct:
         today = datetime.now().astimezone().date()  # run_act() below computes its own "today" internally; must match
         (vault / "timeline").mkdir(parents=True)
         conn = sqlite3.connect(db)
-        self._insert_surface(conn, "An interesting idea about local-first tools",
-                             suggested_action="Write a spec for a local-first tool registry")
+        self._insert_surface(
+            conn,
+            "An interesting idea about local-first tools",
+            suggested_action="Write a spec for a local-first tool registry",
+        )
         conn.commit()
         conn.close()
 

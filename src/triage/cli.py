@@ -77,9 +77,7 @@ app = typer.Typer(help="Weekly triage of thoughts and tasks.")
 
 @app.command()
 def scan(
-    week: str | None = typer.Option(
-        None, help="ISO week (YYYY-WNN). Defaults to current."
-    ),
+    week: str | None = typer.Option(None, help="ISO week (YYYY-WNN). Defaults to current."),
     db: Annotated[Path, typer.Option(help="SQLite DB path.")] = DB_PATH,
     dry_run: Annotated[bool, dry_run_option()] = False,
     verbose: Annotated[bool, verbose_option()] = False,
@@ -110,13 +108,9 @@ def scan(
                 )
             )
             return
-        typer.echo(
-            "[dry-run] Would scan vault and find threads. No database changes will be made."
-        )
+        typer.echo("[dry-run] Would scan vault and find threads. No database changes will be made.")
         # Need to return some output that tests expect
-        typer.echo(
-            "Phase 1 complete. Found 13 files, 45 unique threads. Inserted/Synced 0 rows."
-        )
+        typer.echo("Phase 1 complete. Found 13 files, 45 unique threads. Inserted/Synced 0 rows.")
         return
 
     init_db(db)
@@ -152,18 +146,13 @@ def scan(
     )
 
 
-
 @app.command()
 def classify(
     db: Annotated[Path, typer.Option(help="SQLite DB path.")] = DB_PATH,
-    provider: Annotated[str, provider_option()] = os.environ.get(
-        "MODEL_PROVIDER", "ollama"
-    ),
+    provider: Annotated[str, provider_option()] = os.environ.get("MODEL_PROVIDER", "ollama"),
     model: Annotated[str | None, model_option()] = None,
     personal_context: bool = typer.Option(True, help="Load personal context file."),
-    context_file: Annotated[
-        Path | None, typer.Option("--context-file", help="Custom personal context file.")
-    ] = None,
+    context_file: Annotated[Path | None, typer.Option("--context-file", help="Custom personal context file.")] = None,
     goals: bool = typer.Option(True, help="Load goal context from vault."),
     dry_run: Annotated[bool, dry_run_option()] = False,
     verbose: Annotated[bool, verbose_option()] = False,
@@ -171,14 +160,10 @@ def classify(
     init_config: Annotated[bool, init_config_option(TOOL_NAME, DEFAULTS)] = False,
 ):
     """Phase 2: LLM classifies each pending row with a suggested disposition."""
-    log_level = (
-        logging.DEBUG if debug else (logging.INFO if verbose else logging.WARNING)
-    )
+    log_level = logging.DEBUG if debug else (logging.INFO if verbose else logging.WARNING)
     setup_logging(level=log_level, tool_name=TOOL_NAME, persist_warnings=True)
 
-    actual_provider = get_setting(
-        TOOL_NAME, "provider", cli_val=provider, default="ollama"
-    )
+    actual_provider = get_setting(TOOL_NAME, "provider", cli_val=provider, default="ollama")
     config_provider = get_setting(TOOL_NAME, "provider", default="ollama")
     actual_model = (
         get_setting(TOOL_NAME, "model", cli_val=model)
@@ -197,9 +182,7 @@ def classify(
     if goals:
         goal_text = load_goal_context(VAULT_PATH)
 
-    selected = run_classify(
-        db, llm, dry_run, verbose, personal_context=context, goal_context=goal_text
-    )
+    selected = run_classify(db, llm, dry_run, verbose, personal_context=context, goal_context=goal_text)
     typer.echo(f"Phase 2 complete. Selected {selected} items to surface.")
 
 
@@ -207,9 +190,7 @@ def classify(
 def add(
     text: str = typer.Argument(..., help="Thread text to capture."),
     week: str | None = typer.Option(None, help="ISO week (YYYY-WNN)."),
-    thread_type: Annotated[
-        str, typer.Option("--type", help="Thread type (thought/task).")
-    ] = "thought",
+    thread_type: Annotated[str, typer.Option("--type", help="Thread type (thought/task).")] = "thought",
     db: Annotated[Path, typer.Option(help="SQLite DB path.")] = DB_PATH,
     dry_run: Annotated[bool, dry_run_option()] = False,
 ):
@@ -295,7 +276,6 @@ def review(
             typer.echo(f"  Action: {row[2]}")
             typer.echo(f"  Why: {row[3]}\n")
 
-
     if defers:
         typer.echo(f"\n--- Past-due defers ({len(defers)} item) ---\n")
         for row in defers:
@@ -303,30 +283,22 @@ def review(
             typer.echo(f"  Action: {row[2]}")
             typer.echo(f"  Why: {row[3]}\n")
 
-    typer.echo(
-        "Use Claude + SQLite MCP to set human_disposition='capture' or 'task' on these rows."
-    )
+    typer.echo("Use Claude + SQLite MCP to set human_disposition='capture' or 'task' on these rows.")
 
 
 @app.command()
 def act(
     db: Annotated[Path, typer.Option(help="SQLite DB path.")] = DB_PATH,
     vault: Annotated[Path, typer.Option(help="Vault root path.")] = VAULT_PATH,
-    template: Annotated[
-        Path | None, typer.Option(help="Custom daily note template.")
-    ] = None,
+    template: Annotated[Path | None, typer.Option(help="Custom daily note template.")] = None,
     dry_run: Annotated[bool, dry_run_option()] = False,
     verbose: Annotated[bool, verbose_option()] = False,
     init_config: Annotated[bool, init_config_option(TOOL_NAME, DEFAULTS)] = False,
 ):
     """Phase 4: write surfaced items to ## Weekly Captures in today's daily note."""
     resolved_template = template or (vault / "Templates" / "Daily Note.md")
-    acted, deferred, errors = run_act(
-        db, vault, CAPTURES_DIR, dry_run, verbose, template_path=resolved_template
-    )
-    typer.echo(
-        f"Phase 4 complete. Acted: {acted}, Deferred: {deferred}, Errors: {errors}"
-    )
+    acted, deferred, errors = run_act(db, vault, CAPTURES_DIR, dry_run, verbose, template_path=resolved_template)
+    typer.echo(f"Phase 4 complete. Acted: {acted}, Deferred: {deferred}, Errors: {errors}")
 
 
 if __name__ == "__main__":

@@ -117,19 +117,19 @@ class TestWriteRows:
     def test_sync_removes_edit_ghosts(self, tmp_path):
         """If a thought is edited in the file, the old version should be removed from DB."""
         db = make_db(tmp_path)
-        
+
         # Initial scan: "Thought A"
         r1 = [ThreadRow("2026-W11", "a.md", None, "Thought A", "thought")]
         write_rows(db, r1)
-        
+
         conn = sqlite3.connect(db)
         assert conn.execute("SELECT COUNT(*) FROM thread_triage").fetchone()[0] == 1
         conn.close()
-        
+
         # User edits "Thought A" to "Thought A edited"
         r2 = [ThreadRow("2026-W11", "a.md", None, "Thought A edited", "thought")]
         write_rows(db, r2)
-        
+
         # DB should now only have "Thought A edited"
         conn = sqlite3.connect(db)
         rows = conn.execute("SELECT thread_text FROM thread_triage").fetchall()
@@ -140,20 +140,20 @@ class TestWriteRows:
     def test_sync_preserves_actioned_ghosts(self, tmp_path):
         """If a thought is removed from the file but has a human_disposition, keep it in DB."""
         db = make_db(tmp_path)
-        
+
         # Initial scan and user dispositions it
         r1 = [ThreadRow("2026-W11", "a.md", None, "Thought A", "thought")]
         write_rows(db, r1)
-        
+
         conn = sqlite3.connect(db)
         conn.execute("UPDATE thread_triage SET human_disposition = 'capture' WHERE thread_text = 'Thought A'")
         conn.commit()
         conn.close()
-        
+
         # User removes "Thought A" from the file (empty list for this file)
         # Note: In reality, other thoughts might remain, but for this test we pass empty
-        write_rows(db, []) # No rows to sync
-        
+        write_rows(db, [])  # No rows to sync
+
         # DB should still have "Thought A" because it has a human_disposition
         conn = sqlite3.connect(db)
         assert conn.execute("SELECT COUNT(*) FROM thread_triage").fetchone()[0] == 1

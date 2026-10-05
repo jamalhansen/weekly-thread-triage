@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 class ThreadRow:
     """A candidate thread extracted from a vault file."""
+
     def __init__(
         self,
         week: str,
@@ -27,6 +28,6 @@ class ThreadRow:
 
 
 class Classification(BaseModel):
-    suggested_disposition: str   # capture | task | defer | close | discard
-    suggested_action: str        # one concrete sentence
-    rationale: str               # one sentence why
+    suggested_disposition: str  # capture | task | defer | close | discard
+    suggested_action: str  # one concrete sentence
+    rationale: str  # one sentence why

@@ -13,12 +13,12 @@ _SQL_KEYWORDS = {"select", "insert", "update", "delete", "create", "drop", "alte
 
 # Obsidian task metadata patterns to strip before checking meaningful word count
 _TASK_METADATA_RE = re.compile(
-    r"📅\s*\d{4}-\d{2}-\d{2}"   # due date
+    r"📅\s*\d{4}-\d{2}-\d{2}"  # due date
     r"|⏳\s*\d{4}-\d{2}-\d{2}"  # scheduled date
     r"|✅\s*\d{4}-\d{2}-\d{2}"  # done date
-    r"|\[\[.*?\]\]"              # Obsidian wiki links
-    r"|https?://\S+"             # URLs
-    r"|#\w+"                     # tags
+    r"|\[\[.*?\]\]"  # Obsidian wiki links
+    r"|https?://\S+"  # URLs
+    r"|#\w+"  # tags
 )
 
 
@@ -58,6 +58,7 @@ def find_files_containing_dates(vault: Path, dates: list[date]) -> dict[Path, se
 
     return matches
 
+
 def current_section(lines: list[str], line_idx: int) -> str | None:
     """Walk backwards from line_idx to find the most recent ## heading."""
     for i in range(line_idx - 1, -1, -1):
@@ -65,6 +66,7 @@ def current_section(lines: list[str], line_idx: int) -> str | None:
         if m:
             return m.group(1).strip()
     return None
+
 
 def extract_threads(path: Path, vault: Path) -> list[ThreadRow]:
     """Extract tasks, thoughts, and ideas from a single file."""
@@ -107,13 +109,15 @@ def extract_threads(path: Path, vault: Path) -> list[ThreadRow]:
                 if not is_high_signal(text):
                     continue
                 if text:
-                    threads.append(ThreadRow(
-                        week="",
-                        source_file=rel,
-                        source_section=section,
-                        thread_text=text,
-                        thread_type="task",
-                    ))
+                    threads.append(
+                        ThreadRow(
+                            week="",
+                            source_file=rel,
+                            source_section=section,
+                            thread_text=text,
+                            thread_type="task",
+                        )
+                    )
             continue
 
         if in_thought_section:
@@ -125,23 +129,26 @@ def extract_threads(path: Path, vault: Path) -> list[ThreadRow]:
                     continue
                 if "🔁" in text or "🔄" in text:
                     continue
-                
+
                 search_term = None
                 term_match = re.search(r"\|\s*term:\s*([^|]+)", text)
                 if term_match:
                     search_term = term_match.group(1).strip()
 
                 if text and is_high_signal(text):
-                    threads.append(ThreadRow(
-                        week="",
-                        source_file=rel,
-                        source_section=section,
-                        thread_text=text,
-                        thread_type="thought",
-                        search_term=search_term,
-                    ))
+                    threads.append(
+                        ThreadRow(
+                            week="",
+                            source_file=rel,
+                            source_section=section,
+                            thread_text=text,
+                            thread_type="thought",
+                            search_term=search_term,
+                        )
+                    )
 
     return threads
+
 
 def deduplicate(rows: list[ThreadRow]) -> list[ThreadRow]:
     """Remove rows with identical normalised text, keeping first occurrence."""

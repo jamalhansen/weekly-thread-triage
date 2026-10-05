@@ -4,8 +4,9 @@ from pathlib import Path
 from local_first_common.obsidian import find_vault_root
 
 # DB path resolution
-_SYNC_DB   = Path("~/sync/thread-triage/thread-triage.db").expanduser()
+_SYNC_DB = Path("~/sync/thread-triage/thread-triage.db").expanduser()
 _LEGACY_DB = Path("~/.local-first/local-first.db").expanduser()
+
 
 def _resolve_db_path() -> Path:
     if explicit := os.environ.get("LOCAL_FIRST_DB"):
@@ -14,15 +15,12 @@ def _resolve_db_path() -> Path:
         return _SYNC_DB
     return _LEGACY_DB
 
+
 DB_PATH = _resolve_db_path()
 VAULT_PATH = Path(os.environ.get("OBSIDIAN_VAULT_PATH", "")).expanduser() or find_vault_root()
 
 # Vault subdirectories to scan (everything else is ignored)
-SCAN_DIRS: list[str] = [
-    d.strip()
-    for d in os.environ.get("LOCAL_FIRST_SCAN_DIRS", "timeline").split(":")
-    if d.strip()
-]
+SCAN_DIRS: list[str] = [d.strip() for d in os.environ.get("LOCAL_FIRST_SCAN_DIRS", "timeline").split(":") if d.strip()]
 
 # Sections whose content counts as a "thought" rather than a task
 THOUGHT_SECTIONS = {"morning pages", "thoughts", "voice journal", "reflections", "early morning"}
@@ -34,11 +32,7 @@ SCAN_EXTENSIONS = {".md"}
 SKIP_DIRS = {".obsidian", ".trash", "Templates", "_captures"}
 
 # Path fragments to skip
-SKIP_PATHS: set[str] = {
-    p.strip()
-    for p in os.environ.get("LOCAL_FIRST_SKIP_PATHS", "").split(":")
-    if p.strip()
-}
+SKIP_PATHS: set[str] = {p.strip() for p in os.environ.get("LOCAL_FIRST_SKIP_PATHS", "").split(":") if p.strip()}
 
 # Phase 4 — Act: where output lands in the vault
 CAPTURES_DIR = os.environ.get("LOCAL_FIRST_CAPTURES_DIR", "_captures")

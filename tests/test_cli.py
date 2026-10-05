@@ -59,9 +59,7 @@ def make_db(tmp_path: Path) -> Path:
     return db
 
 
-def _insert_reviewed(
-    conn, thread_text, human_disposition, resurface_after=None, search_term=None
-):
+def _insert_reviewed(conn, thread_text, human_disposition, resurface_after=None, search_term=None):
     """Insert a row with human_disposition already set (simulates post-Phase-3 state)."""
     conn.execute(
         """INSERT INTO thread_triage
@@ -147,9 +145,7 @@ class TestActCommand:
         conn.close()
 
         with patch("triage.config.VAULT_PATH", vault), patch("triage.cli.VAULT_PATH", vault):
-            result = runner.invoke(
-                app, ["act", "--db", str(db), "--vault", str(vault), "--dry-run"]
-            )
+            result = runner.invoke(app, ["act", "--db", str(db), "--vault", str(vault), "--dry-run"])
 
         assert result.exit_code == 0, result.output
         assert "dry-run" in result.output
@@ -222,18 +218,14 @@ class TestScanCommand:
 
 
 class TestClassifyCommand:
-    def test_switching_provider_does_not_carry_over_other_providers_model(
-        self, tmp_path, monkeypatch
-    ):
+    def test_switching_provider_does_not_carry_over_other_providers_model(self, tmp_path, monkeypatch):
         """A saved config model for one provider must not leak into a CLI --provider switch."""
         import local_first_common.config as config_module
 
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         monkeypatch.setattr(config_module, "CONFIG_DIR", config_dir)
-        (config_dir / "weekly-thread-triage.toml").write_text(
-            'provider = "ollama"\nmodel = "llama3.2"\n'
-        )
+        (config_dir / "weekly-thread-triage.toml").write_text('provider = "ollama"\nmodel = "llama3.2"\n')
 
         db = make_db(tmp_path)
 
@@ -241,9 +233,7 @@ class TestClassifyCommand:
             "triage.cli.resolve_provider",
             return_value=MockProvider(json.dumps({"items": []})),
         ) as mock_resolve:
-            result = runner.invoke(
-                app, ["classify", "--db", str(db), "--provider", "anthropic"]
-            )
+            result = runner.invoke(app, ["classify", "--db", str(db), "--provider", "anthropic"])
 
         assert result.exit_code == 0, result.output
         _providers, actual_provider, actual_model = mock_resolve.call_args[0]
@@ -289,16 +279,12 @@ class TestClassifyCommand:
             }
         )
 
-        with patch(
-            "triage.cli.resolve_provider", return_value=MockProvider(mock_response)
-        ):
+        with patch("triage.cli.resolve_provider", return_value=MockProvider(mock_response)):
             result = runner.invoke(app, ["classify", "--db", str(db)])
 
         assert result.exit_code == 0, result.output
         conn = sqlite3.connect(db)
-        rows = conn.execute(
-            "SELECT id, suggested_disposition FROM thread_triage ORDER BY id"
-        ).fetchall()
+        rows = conn.execute("SELECT id, suggested_disposition FROM thread_triage ORDER BY id").fetchall()
         conn.close()
         assert rows[0][1] == "surface"
         assert rows[1][1] == "discard"
@@ -330,9 +316,7 @@ class TestClassifyCommand:
             }
         )
 
-        with patch(
-            "triage.cli.resolve_provider", return_value=MockProvider(mock_response)
-        ):
+        with patch("triage.cli.resolve_provider", return_value=MockProvider(mock_response)):
             result = runner.invoke(app, ["classify", "--db", str(db), "--dry-run"])
 
         assert result.exit_code == 0
@@ -359,9 +343,7 @@ class TestClassifyCommand:
         conn.close()
 
         ctx_file = tmp_path / "context.md"
-        ctx_file.write_text(
-            "## Tool Suite\n\n- content-discovery-agent\n- weekly-thread-triage\n"
-        )
+        ctx_file.write_text("## Tool Suite\n\n- content-discovery-agent\n- weekly-thread-triage\n")
 
         captured_prompts: list[str] = []
 
@@ -422,17 +404,12 @@ class TestReviewCommand:
         result = runner.invoke(app, ["review", "--db", str(db)])
         assert result.exit_code == 0, result.output
         assert "1 item" in result.output
-        assert (
-            "An idea worth reviewing" in result.output
-            or "Do the thing" in result.output
-        )
+        assert "An idea worth reviewing" in result.output or "Do the thing" in result.output
 
     def test_shows_past_due_defers(self, tmp_path):
         db = make_db(tmp_path)
         conn = sqlite3.connect(db)
-        _insert_reviewed(
-            conn, "Should have resurfaced by now", "defer", resurface_after="2020-01-01"
-        )
+        _insert_reviewed(conn, "Should have resurfaced by now", "defer", resurface_after="2020-01-01")
         conn.commit()
         conn.close()
 
@@ -464,9 +441,7 @@ class TestAddCommand:
         )
         assert result.exit_code == 0, result.output
         conn = sqlite3.connect(db)
-        row = conn.execute(
-            "SELECT thread_text, thread_type, source_file FROM thread_triage"
-        ).fetchone()
+        row = conn.execute("SELECT thread_text, thread_type, source_file FROM thread_triage").fetchone()
         conn.close()
         assert row[0] == "A brand new idea captured during review"
         assert row[1] == "thought"
@@ -530,4 +505,3 @@ class TestAddCommand:
         res_rev = runner.invoke(app, ["review", "--db", str(db), "--json"])
         assert res_rev.exit_code == 0
         assert '"Surfaced thread"' in res_rev.stdout
-

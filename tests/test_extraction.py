@@ -93,11 +93,7 @@ class TestExtractThreads:
         """Tasks containing the 🔁 emoji are skipped — already tracked by Tasks plugin."""
         vault = tmp_path
         note = vault / "note.md"
-        note.write_text(
-            "## Morning Pages\n\n"
-            "- [ ] Walk the dog 🔁 every day\n"
-            "- [ ] Set up SQLite MCP server\n"
-        )
+        note.write_text("## Morning Pages\n\n- [ ] Walk the dog 🔁 every day\n- [ ] Set up SQLite MCP server\n")
         threads = extract_threads(note, vault)
         tasks = [t for t in threads if t.thread_type == "task"]
         assert len(tasks) == 1
@@ -107,11 +103,7 @@ class TestExtractThreads:
         """Tasks containing the 🔄 emoji variant are also skipped."""
         vault = tmp_path
         note = vault / "note.md"
-        note.write_text(
-            "## Morning Pages\n\n"
-            "- [ ] Check email 🔄 every morning\n"
-            "- [ ] Write the SQLite MCP spec doc\n"
-        )
+        note.write_text("## Morning Pages\n\n- [ ] Check email 🔄 every morning\n- [ ] Write the SQLite MCP spec doc\n")
         threads = extract_threads(note, vault)
         tasks = [t for t in threads if t.thread_type == "task"]
         assert len(tasks) == 1
@@ -136,9 +128,9 @@ class TestExtractThreads:
         note = vault / "note.md"
         note.write_text(
             "## Morning Pages\n\n"
-            "- [ ] 📅 2026-03-14\n"              # just a date — no meaningful words
-            "- [ ] TBD\n"                          # one word
-            "- [ ] Write the SQLite MCP spec\n"   # 5 meaningful words — keep
+            "- [ ] 📅 2026-03-14\n"  # just a date — no meaningful words
+            "- [ ] TBD\n"  # one word
+            "- [ ] Write the SQLite MCP spec\n"  # 5 meaningful words — keep
         )
         threads = extract_threads(note, vault)
         tasks = [t for t in threads if t.thread_type == "task"]
@@ -227,11 +219,7 @@ class TestExtractThreads:
         """Callout content in non-thought sections is not extracted."""
         vault = tmp_path
         note = vault / "note.md"
-        note.write_text(
-            "## Resources\n\n"
-            "> [!note]- Reference\n"
-            "> - Some technical detail that is not a thought\n"
-        )
+        note.write_text("## Resources\n\n> [!note]- Reference\n> - Some technical detail that is not a thought\n")
         threads = extract_threads(note, vault)
         assert len(threads) == 0
 
@@ -240,9 +228,7 @@ class TestExtractThreads:
         vault = tmp_path
         note = vault / "note.md"
         note.write_text(
-            "## Morning Pages\n\n"
-            "> [!pencil]- Expand\n"
-            "> - [ ] Write the SQLite MCP spec document this week\n"
+            "## Morning Pages\n\n> [!pencil]- Expand\n> - [ ] Write the SQLite MCP spec document this week\n"
         )
         threads = extract_threads(note, vault)
         tasks = [t for t in threads if t.thread_type == "task"]
@@ -357,10 +343,7 @@ class TestFindFilesContainingDates:
         vault = tmp_path
         note = vault / "timeline" / "2026-03-12.md"
         note.parent.mkdir()
-        note.write_text(
-            "---\nCreated: 2026-03-12\n---\n\n"
-            "Today is 2026-03-12 and I worked on the project."
-        )
+        note.write_text("---\nCreated: 2026-03-12\n---\n\nToday is 2026-03-12 and I worked on the project.")
         dates = [date(2026, 3, 12)]
         result = find_files_containing_dates(vault, dates)
         assert note in result
@@ -389,13 +372,14 @@ class TestDeduplicate:
         ]
         assert len(deduplicate(rows)) == 1
 
+
 def test_high_signal_filtering():
     """Verify that short high-signal thoughts are kept and long noise is discarded."""
     import tempfile
     from pathlib import Path
 
     from triage.scanner import extract_threads
-    
+
     content = """
 ## Thoughts
 - Buy BTC
@@ -403,14 +387,14 @@ def test_high_signal_filtering():
 - ? Why is SQLite so fast
 - Sometimes I feel like it is what it is
 """
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.md') as tmp:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md") as tmp:
         tmp.write(content)
         tmp.flush()
         # Mock vault path as the temp dir
         threads = extract_threads(Path(tmp.name), Path(tmp.name).parent)
-        
+
         texts = [t.thread_text for t in threads]
-        assert "Buy BTC" in texts           # High-signal verb
-        assert "? Why is SQLite so fast" in texts # Question
-        assert "I think that maybe I should do something" not in texts # Noise starter
-        assert "Sometimes I feel like it is what it is" not in texts   # Noise starter
+        assert "Buy BTC" in texts  # High-signal verb
+        assert "? Why is SQLite so fast" in texts  # Question
+        assert "I think that maybe I should do something" not in texts  # Noise starter
+        assert "Sometimes I feel like it is what it is" not in texts  # Noise starter
