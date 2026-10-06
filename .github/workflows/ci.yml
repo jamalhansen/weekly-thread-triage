@@ -9,3 +9,5 @@ on:
 jobs:
   ci:
     uses: jamalhansen/local-first-common/.github/workflows/python-ci.yml@main
+    with:
+      typecheck: strict   # pyright reached zero errors 2026-10-05; keep it there
